@@ -26,7 +26,9 @@ import type {
 import type {
   ChatRequest,
   ChatResponse,
-  HTTPValidationError
+  HTTPValidationError,
+  VerifyCodeRequest,
+  VerifyCodeResponse
 } from './model';
 
 import { customFetch } from '../mutator';
@@ -72,44 +74,45 @@ export const getHealthHealthGetUrl = () => {
 /**
  * @summary Health
  */
-export const healthHealthGet = async ( options?: Parameters<typeof customFetch>[1]): Promise<healthHealthGetResponse> => {
+export const healthHealthGet = async (options?: Parameters<typeof customFetch>[1]): Promise<healthHealthGetResponse> => {
 
   return customFetch<healthHealthGetResponse>(getHealthHealthGetUrl(),
-  {
-    ...options,
-    method: 'GET'
+    {
+      ...options,
+      method: 'GET'
 
 
-  }
-);}
+    }
+  );
+}
 
 
 
 
 
 export const getHealthHealthGetQueryKey = () => {
-    return [
+  return [
     `/health`
-    ] as const;
-    }
+  ] as const;
+}
 
 
-export const getHealthHealthGetQueryOptions = <TData = Awaited<ReturnType<typeof healthHealthGet>>, TError = unknown>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof healthHealthGet>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+export const getHealthHealthGetQueryOptions = <TData = Awaited<ReturnType<typeof healthHealthGet>>, TError = unknown>(options?: { query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof healthHealthGet>>, TError, TData>>, request?: SecondParameter<typeof customFetch> }
 ) => {
 
-const {query: queryOptions, request: requestOptions} = options ?? {};
+  const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getHealthHealthGetQueryKey();
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof healthHealthGet>>> = ({ signal }) => healthHealthGet({ signal, ...requestOptions });
+  const queryKey = queryOptions?.queryKey ?? getHealthHealthGetQueryKey();
 
 
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof healthHealthGet>>> = ({ signal }) => healthHealthGet({ signal, ...requestOptions });
 
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof healthHealthGet>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<Awaited<ReturnType<typeof healthHealthGet>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
 
 export type HealthHealthGetQueryResult = NonNullable<Awaited<ReturnType<typeof healthHealthGet>>>
@@ -117,41 +120,45 @@ export type HealthHealthGetQueryError = unknown
 
 
 export function useHealthHealthGet<TData = Awaited<ReturnType<typeof healthHealthGet>>, TError = unknown>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof healthHealthGet>>, TError, TData>> & Pick<
-        DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof healthHealthGet>>,
-          TError,
-          Awaited<ReturnType<typeof healthHealthGet>>
-        > , 'initialData'
-      >, request?: SecondParameter<typeof customFetch>}
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof healthHealthGet>>, TError, TData>> & Pick<
+      DefinedInitialDataOptions<
+        Awaited<ReturnType<typeof healthHealthGet>>,
+        TError,
+        Awaited<ReturnType<typeof healthHealthGet>>
+      >, 'initialData'
+    >, request?: SecondParameter<typeof customFetch>
+  }
+  , queryClient?: QueryClient
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useHealthHealthGet<TData = Awaited<ReturnType<typeof healthHealthGet>>, TError = unknown>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof healthHealthGet>>, TError, TData>> & Pick<
-        UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof healthHealthGet>>,
-          TError,
-          Awaited<ReturnType<typeof healthHealthGet>>
-        > , 'initialData'
-      >, request?: SecondParameter<typeof customFetch>}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof healthHealthGet>>, TError, TData>> & Pick<
+      UndefinedInitialDataOptions<
+        Awaited<ReturnType<typeof healthHealthGet>>,
+        TError,
+        Awaited<ReturnType<typeof healthHealthGet>>
+      >, 'initialData'
+    >, request?: SecondParameter<typeof customFetch>
+  }
+  , queryClient?: QueryClient
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useHealthHealthGet<TData = Awaited<ReturnType<typeof healthHealthGet>>, TError = unknown>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof healthHealthGet>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+  options?: { query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof healthHealthGet>>, TError, TData>>, request?: SecondParameter<typeof customFetch> }
+  , queryClient?: QueryClient
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
  * @summary Health
  */
 
 export function useHealthHealthGet<TData = Awaited<ReturnType<typeof healthHealthGet>>, TError = unknown>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof healthHealthGet>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
- , queryClient?: QueryClient
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  options?: { query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof healthHealthGet>>, TError, TData>>, request?: SecondParameter<typeof customFetch> }
+  , queryClient?: QueryClient
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getHealthHealthGetQueryOptions(options)
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
   return withQueryKey(query, queryOptions.queryKey);
 }
@@ -194,7 +201,7 @@ export const getSendChatUrl = () => {
  */
 export const sendChat = async (chatRequest: ChatRequest, options?: Parameters<typeof customFetch>[1]): Promise<sendChatResponse> => {
 
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+  const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
     if (h instanceof Headers) return Object.fromEntries(h.entries());
     if (Symbol.iterator in h) {
@@ -208,14 +215,15 @@ export const sendChat = async (chatRequest: ChatRequest, options?: Parameters<ty
     }
     return headers;
   };
-return customFetch<sendChatResponse>(getSendChatUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(chatRequest)
-  }
-);}
+  return customFetch<sendChatResponse>(getSendChatUrl(),
+    {
+      ...options,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+      body: JSON.stringify(chatRequest)
+    }
+  );
+}
 
 
 
@@ -224,47 +232,153 @@ return customFetch<sendChatResponse>(getSendChatUrl(),
 export const getSendChatMutationKey = () => ['sendChat'] as const;
 
 export const getSendChatMutationOptions = <TError = HTTPValidationError,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendChat>>, TError,SendChatMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof sendChat>>, TError,SendChatMutationVariables, TContext> => {
+  TContext = unknown>(options?: { mutation?: UseMutationOptions<Awaited<ReturnType<typeof sendChat>>, TError, SendChatMutationVariables, TContext>, request?: SecondParameter<typeof customFetch> }
+  ): UseMutationOptions<Awaited<ReturnType<typeof sendChat>>, TError, SendChatMutationVariables, TContext> => {
 
-const mutationKey = getSendChatMutationKey();
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+  const mutationKey = getSendChatMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options ?
+    options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
       options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey, }, request: undefined };
 
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendChat>>, SendChatMutationVariables> = (props) => {
-          const {data} = props ?? {};
+  const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendChat>>, SendChatMutationVariables> = (props) => {
+    const { data } = props ?? {};
 
-          return  sendChat(data,requestOptions)
-        }
-
-
+    return sendChat(data, requestOptions)
+  }
 
 
 
 
-  return  { mutationFn, ...mutationOptions }}
 
-    export type SendChatMutationResult = NonNullable<Awaited<ReturnType<typeof sendChat>>>
-    export type SendChatMutationBody = ChatRequest
-    export type SendChatMutationError = HTTPValidationError
-    export type SendChatMutationVariables = {data: ChatRequest}
 
-    /**
- * @summary Chat Endpoint
- */
+  return { mutationFn, ...mutationOptions }
+}
+
+export type SendChatMutationResult = NonNullable<Awaited<ReturnType<typeof sendChat>>>
+export type SendChatMutationBody = ChatRequest
+export type SendChatMutationError = HTTPValidationError
+export type SendChatMutationVariables = { data: ChatRequest }
+
+/**
+* @summary Chat Endpoint
+*/
 export const useSendChat = <TError = HTTPValidationError,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendChat>>, TError,SendChatMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof sendChat>>,
-        TError,
-        SendChatMutationVariables,
-        TContext
-      > => {
-      return useMutation(getSendChatMutationOptions(options), queryClient);
+  TContext = unknown>(options?: { mutation?: UseMutationOptions<Awaited<ReturnType<typeof sendChat>>, TError, SendChatMutationVariables, TContext>, request?: SecondParameter<typeof customFetch> }
+    , queryClient?: QueryClient): UseMutationResult<
+      Awaited<ReturnType<typeof sendChat>>,
+      TError,
+      SendChatMutationVariables,
+      TContext
+    > => {
+  return useMutation(getSendChatMutationOptions(options), queryClient);
+}
+
+export type verifyCodeResponse200 = {
+  data: VerifyCodeResponse
+  status: 200
+}
+
+export type verifyCodeResponse422 = {
+  data: HTTPValidationError
+  status: 422
+}
+
+export type verifyCodeResponseSuccess = (verifyCodeResponse200) & {
+  headers: Headers;
+};
+export type verifyCodeResponseError = (verifyCodeResponse422) & {
+  headers: Headers;
+};
+
+export type verifyCodeResponse = (verifyCodeResponseSuccess | verifyCodeResponseError)
+
+export const getVerifyCodeUrl = () => {
+  return `/verify-code`
+}
+
+/**
+ * @summary Verify Code Endpoint
+ */
+export const verifyCode = async (verifyCodeRequest: VerifyCodeRequest, options?: Parameters<typeof customFetch>[1]): Promise<verifyCodeResponse> => {
+
+  const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
     }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return customFetch<verifyCodeResponse>(getVerifyCodeUrl(),
+    {
+      ...options,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+      body: JSON.stringify(verifyCodeRequest)
+    }
+  );
+}
+
+
+
+
+
+export const getVerifyCodeMutationKey = () => ['verifyCode'] as const;
+
+export const getVerifyCodeMutationOptions = <TError = HTTPValidationError,
+  TContext = unknown>(options?: { mutation?: UseMutationOptions<Awaited<ReturnType<typeof verifyCode>>, TError, VerifyCodeMutationVariables, TContext>, request?: SecondParameter<typeof customFetch> }
+  ): UseMutationOptions<Awaited<ReturnType<typeof verifyCode>>, TError, VerifyCodeMutationVariables, TContext> => {
+
+  const mutationKey = getVerifyCodeMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options ?
+    options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey, }, request: undefined };
+
+
+
+
+  const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifyCode>>, VerifyCodeMutationVariables> = (props) => {
+    const { data } = props ?? {};
+
+    return verifyCode(data, requestOptions)
+  }
+
+
+
+
+
+
+  return { mutationFn, ...mutationOptions }
+}
+
+export type VerifyCodeMutationResult = NonNullable<Awaited<ReturnType<typeof verifyCode>>>
+export type VerifyCodeMutationBody = VerifyCodeRequest
+export type VerifyCodeMutationError = HTTPValidationError
+export type VerifyCodeMutationVariables = { data: VerifyCodeRequest }
+
+/**
+* @summary Verify Code Endpoint
+*/
+export const useVerifyCode = <TError = HTTPValidationError,
+  TContext = unknown>(options?: { mutation?: UseMutationOptions<Awaited<ReturnType<typeof verifyCode>>, TError, VerifyCodeMutationVariables, TContext>, request?: SecondParameter<typeof customFetch> }
+    , queryClient?: QueryClient): UseMutationResult<
+      Awaited<ReturnType<typeof verifyCode>>,
+      TError,
+      VerifyCodeMutationVariables,
+      TContext
+    > => {
+  return useMutation(getVerifyCodeMutationOptions(options), queryClient);
+}

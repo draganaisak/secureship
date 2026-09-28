@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, String
+from sqlalchemy import DateTime, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,3 +29,12 @@ class ChatSession(Base):
         DateTime(timezone=True), nullable=True
     )
     transcript: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+
+    pending_customer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    code: Mapped[str | None] = mapped_column(String, nullable=True)
+    code_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    code_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

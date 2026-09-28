@@ -8,4 +8,8 @@
 export interface ChatResponse {
   reply: string;
   session_id: string;
+  state: string;
+  show_code_modal?: boolean;
+  escalate?: boolean;
+  first_name?: string | null;
 }
