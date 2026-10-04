@@ -47,6 +47,26 @@ Implement and enforce the conversation state machine (`docs/diagrams/architectur
 - **Inc 11** On-demand code modal (frontend). *Done:* modal appears only when signalled, verifies, surfaces the result.
 - **Inc 12** Escalation theater (Epic G). *Done:* "talk to a human" from Anonymous or Verified plays the scripted handoff + color shift; no data leaks.
 
-## Out of scope until Week 3+
+## Week 3 goal (Phase 3)
 
-Shipment tool-calling and real shipment answers (Week 3 / Epic F), Auth0 admin panel (Week 4), hardening/docs (Week 5). A Verified user this week has no shipment data to fetch yet - intentional, like Week 1's missing gate.
+Verified users get real, gated shipment answers via tool-calling (Epic F, D1-D2). The local model is given a `lookup_shipments` tool but never direct DB access; the backend executes it and always scopes the query to `session.customer_id`, never a model- or user-supplied id. This replaces the Week 2 verified stub that told the model lookups were unavailable.
+
+## Week 3 decisions
+
+- One tool, `lookup_shipments`, with no customer argument (Epic F1; skeleton 6.6; the 6.3 note "tool layer always uses session.customer_id"). Epic D2 is satisfied by scoping alone - a foreign tracking number is never in the returned set - so no separate per-tracking tool.
+- Shipments only, not packages. `Package` is admin-managed (spec 4.4) and belongs to Week 4 CRUD (Epic E2).
+- The single auditable enforcement point (Epic F3) is `backend/tools.py:run_tool` - it re-checks `state == verified`, ignores tool arguments, and queries by `session.customer_id`.
+- Backend agentic loop: call model with tools, execute any tool calls (scoped), feed results back, repeat up to `MAX_TOOL_ROUNDS`, then return the model's text answer.
+- No PII in logs: each tool call logs name + customer_id (uuid) + result count only.
+- No schema change, no DB recreate, no reseed, no frontend/Orval change (the `/chat` contract is unchanged; the reply just carries real data now).
+
+## Week 3 increments (done-when)
+
+- **Inc 13** Tool-calling client. *Done:* `chat_with_tools` returns the raw message; `strip_think` exposed.
+- **Inc 14** Enforcement layer. *Done:* `backend/tools.py` with `SHIPMENT_TOOLS` + guarded `run_tool` scoped to `session.customer_id`.
+- **Inc 15** Verified branch. *Done:* `_verified_reply` tool loop wired in `/chat`; `VERIFIED_SYSTEM` drives tool use; verified users get real shipment answers.
+- **Inc 16** Gate holds. *Done:* prompt-injection ("show all shipments" / a foreign tracking number) returns only the caller's data; backend log shows the scoped call.
+
+## Out of scope until Week 4+
+
+Auth0 admin login + Customer/Shipment/Package CRUD (Week 4, Epic E). Hardening, diagram regen, README finalize, and optional stretch goals (Twilio, containerized Ollama, admin chat viewer) - Week 5.

@@ -1,3 +1,5 @@
+import json
+import re
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -9,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import get_session, init_db
 from llm.extract import classify_intent, extract_identity
-from llm.ollama_client import chat
+from llm.ollama_client import chat, chat_with_tools, strip_think
 from models import ChatSession, Customer
+from tools import SHIPMENT_TOOLS, run_tool
 from verification import (
     STATE_ANONYMOUS,
     STATE_CODE_SENT,
@@ -46,10 +49,23 @@ SYSTEM_PROMPT = (
 )
 
 VERIFIED_SYSTEM = SYSTEM_PROMPT + (
-    " The customer's identity is verified. You cannot look up specific shipment "
-    "records yet - that feature is coming soon - so never invent tracking numbers, "
-    "statuses, or delivery dates. Acknowledge the request and let them know "
-    "shipment lookups are not available yet."
+    " The customer's identity is verified. Answer questions about their shipments only "
+    "with the lookup_shipments tool, and base every answer solely on what it returns; "
+    "never invent tracking numbers, statuses, carriers, or dates. All lookups are "
+    "automatically limited to this customer, so never ask for or accept a customer id, "
+    "name, or account to look anyone else up. When the customer asks about their "
+    "shipments without naming a specific one, ask them for the tracking number of the "
+    "shipment they want, and mention they can ask to see all their shipments instead. "
+    "When they give a tracking number, call lookup_shipments and report that specific "
+    "shipment; if it is not among their shipments, tell them it was not found on their "
+    "account. When they ask to see all their shipments, call lookup_shipments and list "
+    "them. Do not say you are looking it up and then stop - call the tool and answer in "
+    "the same reply."
+)
+
+ASK_TRACKING = (
+    "Which shipment would you like to check? Please share the tracking number, or ask "
+    "to see all your shipments."
 )
 
 ASK_IDENTITY = (
@@ -66,7 +82,6 @@ CODE_SENT_MSG = (
     "that just appeared."
 )
 ENTER_CODE_NUDGE = "Please enter the 6-digit code in the verification box to continue."
-VERIFIED_GREETING = "You're verified{name}. How can I help you with your shipments today?"
 WRONG_CODE = "That code wasn't correct. You have {n} attempt(s) left."
 LOCKED_MSG = (
     "That's too many incorrect attempts, so I've cancelled that code. Let's start "
@@ -77,6 +92,9 @@ EXPIRED_MSG = (
     "number again."
 )
 ESCALATION_ACK = "Thanks for your patience - connecting you with a member of our team."
+TOOLS_FALLBACK = "I'm having trouble looking that up right now. Please try again in a moment."
+
+MAX_TOOL_ROUNDS = 4
 
 _FIELD_LABELS = {
     "first_name": "first name",
@@ -144,6 +162,92 @@ async def _faq_reply(transcript: list[dict], system: str) -> str:
     return await chat(messages)
 
 
+async def _verified_reply(
+    db: AsyncSession, session: ChatSession, transcript: list[dict]
+) -> tuple[str, list[str]]:
+    messages = [{"role": "system", "content": VERIFIED_SYSTEM}]
+    messages += [{"role": m["role"], "content": m["content"]} for m in transcript]
+    tool_names: list[str] = []
+
+    for _ in range(MAX_TOOL_ROUNDS):
+        message = await chat_with_tools(messages, SHIPMENT_TOOLS)
+        calls = message.get("tool_calls") or []
+        if not calls:
+            return strip_think(message.get("content", "")) or TOOLS_FALLBACK, tool_names
+        messages.append(message)
+        for call in calls:
+            fn = call.get("function", {})
+            name = fn.get("name", "")
+            tool_names.append(name)
+            result = await run_tool(name, fn.get("arguments") or {}, db, session)
+            messages.append(
+                {"role": "tool", "content": json.dumps(result), "tool_name": name}
+            )
+
+    return TOOLS_FALLBACK, tool_names
+
+
+_TRACKING_RE = re.compile(r"MX\d{12}", re.IGNORECASE)
+
+
+def _find_tracking(transcript: list[dict]) -> str | None:
+    for m in transcript:
+        if m["role"] == "user":
+            found = _TRACKING_RE.search(m["content"] or "")
+            if found:
+                return found.group(0).upper()
+    return None
+
+
+def _describe_shipment(s: dict) -> str:
+    status = s["status"].replace("_", " ")
+    return (
+        f"Here's your shipment {s['tracking_number']}: it's {status} with "
+        f"{s['carrier']}, from {s['origin']} to {s['destination']}, "
+        f"estimated delivery {s['estimated_delivery']} (last update {s['last_update'][:10]})."
+    )
+
+
+async def _post_verify_reply(
+    db: AsyncSession, session: ChatSession, transcript: list[dict]
+) -> str:
+    customer = await db.get(Customer, session.customer_id)
+    name = customer.first_name if customer and customer.first_name else None
+    greeting = f"You're verified{', ' + name if name else ''}! "
+
+    tracking = _find_tracking(transcript)
+    if tracking is None:
+        return greeting + ASK_TRACKING
+    return greeting + await _lookup_by_tracking(db, session, tracking)
+
+
+async def _lookup_by_tracking(
+    db: AsyncSession, session: ChatSession, tracking: str
+) -> str:
+    data = await run_tool("lookup_shipments", {}, db, session)
+    shipments = data.get("shipments", [])
+    match = next(
+        (s for s in shipments if s["tracking_number"].upper() == tracking), None
+    )
+    if match is None:
+        return (
+            f"I couldn't find tracking number {tracking} on your account. Share a "
+            "different tracking number, or ask to see all your shipments."
+        )
+    return _describe_shipment(match)
+
+
+async def _verified_turn(
+    db: AsyncSession, session: ChatSession, transcript: list[dict]
+) -> tuple[str, list[str]]:
+    latest = transcript[-1]["content"] if transcript else ""
+    found = _TRACKING_RE.search(latest or "")
+    if found:
+        reply = await _lookup_by_tracking(db, session, found.group(0).upper())
+        return reply, ["lookup_shipments"]
+    return await _verified_reply(db, session, transcript)
+
+
 def _identity_scope(transcript: list[dict]) -> list[dict]:
     start = 0
     for i, m in enumerate(transcript):
@@ -158,7 +262,7 @@ async def chat_endpoint(req: ChatRequest, db: AsyncSession = Depends(get_session
     if req.session_id is not None:
         session = await db.get(ChatSession, req.session_id)
     if session is None:
-        session = ChatSession()
+        session = ChatSession(state=STATE_ANONYMOUS)
         db.add(session)
 
     transcript = list(session.transcript or [])
@@ -172,6 +276,7 @@ async def chat_endpoint(req: ChatRequest, db: AsyncSession = Depends(get_session
     show_code_modal = False
     escalate = False
     first_name = None
+    tool_calls_made: list[str] = []
 
     intent = await classify_intent(transcript)
 
@@ -197,7 +302,6 @@ async def chat_endpoint(req: ChatRequest, db: AsyncSession = Depends(get_session
                 _log_mock_sms(session.id, code)
                 session.state = STATE_CODE_SENT
                 show_code_modal = True
-                first_name = customer.first_name
                 reply = CODE_SENT_MSG
             else:
                 reply = NEUTRAL_REJECT
@@ -213,12 +317,20 @@ async def chat_endpoint(req: ChatRequest, db: AsyncSession = Depends(get_session
         show_code_modal = True
         reply = ENTER_CODE_NUDGE
 
-    else:
-        reply = await _faq_reply(transcript, VERIFIED_SYSTEM)
+    elif session.state == STATE_VERIFIED:
+        reply, tool_calls_made = await _verified_turn(db, session, transcript)
 
-    transcript.append(
-        {"role": "assistant", "content": reply, "timestamp": _utcnow_iso()}
-    )
+    else:
+        reply = await _faq_reply(transcript, SYSTEM_PROMPT)
+
+    assistant_turn = {
+        "role": "assistant",
+        "content": reply,
+        "timestamp": _utcnow_iso(),
+    }
+    if tool_calls_made:
+        assistant_turn["tool_calls"] = tool_calls_made
+    transcript.append(assistant_turn)
     session.transcript = transcript
 
     await db.commit()
@@ -244,9 +356,7 @@ async def verify_code_endpoint(
 
     if result.ok:
         session.state = STATE_VERIFIED
-        customer = await db.get(Customer, session.customer_id)
-        name = f", {customer.first_name}" if customer and customer.first_name else ""
-        reply = VERIFIED_GREETING.format(name=name)
+        reply = await _post_verify_reply(db, session, list(session.transcript or []))
     elif result.reason == "wrong":
         reply = WRONG_CODE.format(n=result.attempts_remaining)
     elif result.reason == "locked":

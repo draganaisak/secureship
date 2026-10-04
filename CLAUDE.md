@@ -11,8 +11,13 @@ There is no end-user login; a single Auth0 admin (Week 4) manages the data.
 - Full spec: `docs/project-requirements.md`
 - Working plan (goal / approach / done-when per increment): `docs/PLAN.md`
 
-**Current state: Week 1 complete** - the stack runs and holds a real conversation with the
-local model, with **no gating yet** (asking about a shipment just gets answered; that is intentional and temporary). The seeded shipment data is not reachable by the chat until Week 3's tool-calling.
+**Current state: Week 3 complete** - the stack runs, the state machine gates a visitor through
+conversational identity collection + a mocked 6-digit 2FA code to `verified`, and a verified user
+gets real shipment answers via tool-calling. The model is given a single `lookup_shipments` tool
+(no direct DB access); the backend executes it and always scopes the query to
+`session.customer_id`, never a model- or user-supplied id. That enforcement point lives in
+`backend/tools.py` (`run_tool`), and the verified tool loop is `_verified_reply` in `main.py`.
+Packages and the Auth0 admin panel are Week 4; hardening/docs are Week 5.
 
 ## Environment constraints (non-negotiable, chosen deliberately)
 
@@ -59,8 +64,8 @@ There is no automated test suite yet; verification is manual (curl `/health` and
 
 **One chat turn:** `ChatWindow.tsx` → `POST /chat {message, session_id}` → `backend/main.py`loads-or-creates a `ChatSession` row → appends the user turn → sends the system prompt + full stored history to Ollama via `llm/ollama_client.py` → appends the reply → saves → returns`{reply, session_id}`.
 
-- **The server owns the conversation.** The browser only keeps a `session_id`; the full transcript lives in Postgres as a `JSONB` array of `{role, content, timestamp}` on `ChatSession.transcript`. This is the seam where identity gating will be enforced (Weeks 2-3): session state and the verified `customer_id` live on the server, never trusted from the client.
-- **The gating enforcement point (future, Epic F).** When tool-calling lands, the tool layer must always scope shipment lookups to `session.customer_id` - never a model- or user-supplied id - and the "verified" check must be a single auditable point in the backend, enforced outside the model's prompt. Do not scatter this logic.
+- **The server owns the conversation.** The browser only keeps a `session_id`; the full transcript lives in Postgres as a `JSONB` array of `{role, content, timestamp}` on `ChatSession.transcript`. This is the seam where identity gating is enforced: session state and the verified `customer_id` live on the server, never trusted from the client.
+- **The gating enforcement point (Epic F, `backend/tools.py:run_tool`).** The tool layer always scopes shipment lookups to `session.customer_id` - never a model- or user-supplied id - and re-checks `state == verified` before running; the tool's `arguments` are deliberately ignored. This is the single auditable check, enforced outside the model's prompt. The model gets tools only in the verified branch (`_verified_reply` in `main.py`), which runs a capped tool-call loop. Keep this logic here; do not scatter it.
 - **Frontend types are generated, never hand-written.** FastAPI publishes `/openapi.json`; Orval (`frontend/orval.config.ts`) generates React Query hooks + TS types into `frontend/src/api/generated/` (do **not** hand-edit). All requests route through `frontend/src/api/mutator.ts`, which prepends `VITE_API_URL`. After changing backend request/response models or routes: restart the backend, then `npx orval`, then commit the regenerated output.
 - **Async all the way:** FastAPI + httpx (Ollama) + SQLAlchemy 2.0 async engine + asyncpg. Use the `get_session` dependency for DB access in handlers.
 
@@ -70,6 +75,11 @@ There is no automated test suite yet; verification is manual (curl `/health` and
 - **Orval response types are discriminated unions** (`{data, status}` for 200 vs 422). Narrow on`response.status === 200` before reading `response.data`, even though `mutator.ts` throws on non-2xx.
 - **JSONB updates must reassign**, not mutate in place - `session.transcript = [...]`, because
   SQLAlchemy does not track an in-place `.append`.
+- **Column `default=` applies at INSERT (flush), not at object construction.** A freshly built
+  `ChatSession()` has `state=None`, `code_attempts=None`, etc. until committed - so set gate-
+  critical fields explicitly when creating (`ChatSession(state=STATE_ANONYMOUS)`) rather than
+  reading them pre-flush. The state branch also fails **closed**: unknown/None state routes to the
+  anonymous FAQ, never the verified/tool branch.
 - **Persona/system prompt is prepended server-side** in `main.py` and is never stored as a user turn in the transcript.
 - **qwen3 is a thinking model:** `ollama_client.py` disables thinking and strips
   `<think>...</think>` defensively; keep both.
