@@ -5,3 +5,6 @@ sqlalchemy[asyncio]
 asyncpg
 greenlet
 faker
+auth0-fastapi-api
+python-dotenv
+pytest

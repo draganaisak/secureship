@@ -22,3 +22,5 @@ __pycache__/
 # Node
 node_modules/
 frontend/dist/
+yarn.lock
+.pytest_cache/

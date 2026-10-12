@@ -67,6 +67,45 @@ Verified users get real, gated shipment answers via tool-calling (Epic F, D1-D2)
 - **Inc 15** Verified branch. *Done:* `_verified_reply` tool loop wired in `/chat`; `VERIFIED_SYSTEM` drives tool use; verified users get real shipment answers.
 - **Inc 16** Gate holds. *Done:* prompt-injection ("show all shipments" / a foreign tracking number) returns only the caller's data; backend log shows the scoped call.
 
-## Out of scope until Week 4+
+## Week 4 goal (Phase 4)
 
-Auth0 admin login + Customer/Shipment/Package CRUD (Week 4, Epic E). Hardening, diagram regen, README finalize, and optional stretch goals (Twilio, containerized Ollama, admin chat viewer) - Week 5.
+A single **admin** logs in via **Auth0** and manages the data the chat draws from (Customer /
+Shipment / Package CRUD). The two identity systems stay separate: conversational 2FA
+(`verification.py`) has nothing to do with Auth0, and an admin cannot become a verified chat
+session (Epic E4). Per spec 4.5, the Auth0 slice is built **using the Auth0 Agent Skills**.
+
+## Week 4 decisions
+
+- Auth0 for admin login only (Epic E1/E4; spec 4.5). Chat verification untouched.
+- Gate enforced on the backend routes, not frontend nav (Epic E3): one `require_admin` FastAPI
+  dependency validates the Auth0 JWT (RS256 via JWKS + issuer + audience + expiry) - the single
+  auditable admin enforcement point, mirroring `tools.py` for chat.
+- CRUD for all three entities (Epic E2). Status stays a `String` column, validated as an enum at
+  the Pydantic layer (spec 4.4 values) - no migration, consistent with `create_all`.
+- HTTP + Orval: admin endpoints get explicit `operation_id`s; the admin panel consumes the
+  generated hooks (spec 4.8). Admin calls carry a Bearer token attached in `mutator.ts` for
+  `/admin` URLs only; chat calls stay anonymous.
+- Build sequence: the Auth0-neutral half (CRUD backend + admin UI) first; the Auth0 slice
+  (real `require_admin`, `Auth0Provider`/login/token) second, driven by the installed skills.
+
+## Week 4 increments (done-when)
+
+- **Inc 17** Admin CRUD backend. *Done:* `backend/admin.py` router (15 ops, explicit
+  `operation_id`s) wired in `main.py`; `backend/auth.py` `require_admin` fails closed (401).
+  DONE.
+- **Inc 18** Admin panel UI. *Done:* `/admin` route; `AdminPanel` + Customer/Shipment/Package
+  managers using generated Orval hooks; build + lint clean. DONE.
+- **Inc 19** Auth0 slice (skill-driven). *Done:* built via the Auth0 Agent Skills
+  (`framework-fastapi-api` + `framework-react`). `backend/auth.py:require_admin` uses the
+  `auth0-fastapi-api` SDK; frontend `Auth0Provider` + `ProtectedRoute` + login/logout + token into
+  `mutator.ts` via `AuthTokenBridge`. Verified: no token -> 400, junk token -> 401, real login ->
+  200. DONE.
+- **Inc 20** E2E + separation. *Done:* create/edit/delete persisted for all three entities;
+  admin set a shipment `delivered -> exception` and a verified chat reported `exception` (same
+  live DB); chat works tokenless and cannot reach `/admin/*`; admin auth never touches
+  `ChatSession`. DONE.
+
+## Out of scope until Week 5
+
+Diagram regen, README finalize, edge-case hardening, and optional stretch goals (Twilio,
+containerized Ollama, admin chat-session viewer, codegen-suggestion skill).

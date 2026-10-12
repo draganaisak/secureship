@@ -2,13 +2,14 @@ import json
 import re
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from admin import router as admin_router
 from db.session import get_session, init_db
 from llm.extract import classify_intent, extract_identity
 from llm.ollama_client import chat, chat_with_tools, strip_think
@@ -42,6 +43,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(admin_router)
+
 SYSTEM_PROMPT = (
     "You are SecureShip's shipment-support assistant. "
     "Be concise, friendly, and professional. "
@@ -60,7 +63,9 @@ VERIFIED_SYSTEM = SYSTEM_PROMPT + (
     "shipment; if it is not among their shipments, tell them it was not found on their "
     "account. When they ask to see all their shipments, call lookup_shipments and list "
     "them. Do not say you are looking it up and then stop - call the tool and answer in "
-    "the same reply."
+    "the same reply. Present each shipment on its own lines: a header '📦 Shipment "
+    "<tracking>', then '• Status:', '• Carrier:', '• From:', '• To:', '• Estimated "
+    "delivery:', and '• Last update:', one per line."
 )
 
 ASK_TRACKING = (
@@ -188,6 +193,7 @@ async def _verified_reply(
 
 
 _TRACKING_RE = re.compile(r"MX\d{12}", re.IGNORECASE)
+_LIST_ALL_RE = re.compile(r"\b(all|every|everything|list)\b", re.IGNORECASE)
 
 
 def _find_tracking(transcript: list[dict]) -> str | None:
@@ -199,13 +205,47 @@ def _find_tracking(transcript: list[dict]) -> str | None:
     return None
 
 
-def _describe_shipment(s: dict) -> str:
-    status = s["status"].replace("_", " ")
+_STATUS_LABELS = {
+    "label_created": "Label created",
+    "in_transit": "In transit",
+    "out_for_delivery": "Out for delivery",
+    "delivered": "Delivered",
+    "exception": "Exception",
+}
+
+
+def _fmt_date(iso: str) -> str:
+    d = date.fromisoformat(iso[:10])
+    return f"{d.strftime('%b')} {d.day}, {d.year}"
+
+
+def _format_shipment(s: dict) -> str:
+    status = _STATUS_LABELS.get(s["status"], s["status"].replace("_", " ").capitalize())
     return (
-        f"Here's your shipment {s['tracking_number']}: it's {status} with "
-        f"{s['carrier']}, from {s['origin']} to {s['destination']}, "
-        f"estimated delivery {s['estimated_delivery']} (last update {s['last_update'][:10]})."
+        f"📦 Shipment {s['tracking_number']}\n"
+        f"• Status: {status}\n"
+        f"• Carrier: {s['carrier']}\n"
+        f"• From: {s['origin']}\n"
+        f"• To: {s['destination']}\n"
+        f"• Estimated delivery: {_fmt_date(s['estimated_delivery'])}\n"
+        f"• Last update: {_fmt_date(s['last_update'])}"
     )
+
+
+def _describe_shipment(s: dict) -> str:
+    return "Here you go:\n\n" + _format_shipment(s)
+
+
+async def _list_all_shipments(db: AsyncSession, session: ChatSession) -> str:
+    data = await run_tool("lookup_shipments", {}, db, session)
+    shipments = data.get("shipments", [])
+    if not shipments:
+        return "You don't have any shipments on your account right now."
+    blocks = "\n\n".join(_format_shipment(s) for s in shipments)
+    count = len(shipments)
+    verb = "is" if count == 1 else "are"
+    plural = "" if count == 1 else "s"
+    return f"Here {verb} your {count} shipment{plural}:\n\n{blocks}"
 
 
 async def _post_verify_reply(
@@ -245,6 +285,8 @@ async def _verified_turn(
     if found:
         reply = await _lookup_by_tracking(db, session, found.group(0).upper())
         return reply, ["lookup_shipments"]
+    if _LIST_ALL_RE.search(latest or ""):
+        return await _list_all_shipments(db, session), ["lookup_shipments"]
     return await _verified_reply(db, session, transcript)
 
 
@@ -254,6 +296,31 @@ def _identity_scope(transcript: list[dict]) -> list[dict]:
         if m["role"] == "assistant" and m["content"] in _RESET_MARKERS:
             start = i + 1
     return transcript[start:]
+
+
+async def _collect_identity(
+    db: AsyncSession, session: ChatSession, transcript: list[dict]
+) -> tuple[str, bool]:
+    """Pull identity from the transcript and, if it matches, send the code.
+
+    Returns (reply, show_code_modal). Shared by the anonymous->collect transition
+    and the collecting-identity turn so details given up front are not ignored.
+    """
+    fields = await extract_identity(_identity_scope(transcript))
+    if fields["last_name"] and fields["phone"]:
+        customer = await match_customer(db, fields["last_name"], fields["phone"])
+        if customer is not None:
+            code = issue_code(session, customer)
+            _log_mock_sms(session.id, code)
+            session.state = STATE_CODE_SENT
+            return CODE_SENT_MSG, True
+        return NEUTRAL_REJECT, False
+    missing_keys = [
+        k for k in ("first_name", "last_name", "address", "phone") if not fields[k]
+    ]
+    if len(missing_keys) == 4:
+        return ASK_IDENTITY, False
+    return ASK_MISSING.format(missing=", ".join(_FIELD_LABELS[k] for k in missing_keys)), False
 
 
 @app.post("/chat", response_model=ChatResponse, operation_id="sendChat")
@@ -289,29 +356,12 @@ async def chat_endpoint(req: ChatRequest, db: AsyncSession = Depends(get_session
     elif session.state == STATE_ANONYMOUS:
         if intent["wants_shipment"]:
             session.state = STATE_COLLECTING_IDENTITY
-            reply = ASK_IDENTITY
+            reply, show_code_modal = await _collect_identity(db, session, transcript)
         else:
             reply = await _faq_reply(transcript, SYSTEM_PROMPT)
 
     elif session.state == STATE_COLLECTING_IDENTITY:
-        fields = await extract_identity(_identity_scope(transcript))
-        if fields["last_name"] and fields["phone"]:
-            customer = await match_customer(db, fields["last_name"], fields["phone"])
-            if customer is not None:
-                code = issue_code(session, customer)
-                _log_mock_sms(session.id, code)
-                session.state = STATE_CODE_SENT
-                show_code_modal = True
-                reply = CODE_SENT_MSG
-            else:
-                reply = NEUTRAL_REJECT
-        else:
-            missing = ", ".join(
-                _FIELD_LABELS[k]
-                for k in ("first_name", "last_name", "address", "phone")
-                if not fields[k]
-            )
-            reply = ASK_MISSING.format(missing=missing)
+        reply, show_code_modal = await _collect_identity(db, session, transcript)
 
     elif session.state == STATE_CODE_SENT:
         show_code_modal = True

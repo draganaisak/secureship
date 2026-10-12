@@ -8,6 +8,9 @@ services:
       - /app/node_modules
     environment:
       - VITE_API_URL=http://localhost:8000
+      - VITE_AUTH0_DOMAIN=${VITE_AUTH0_DOMAIN:-}
+      - VITE_AUTH0_CLIENT_ID=${VITE_AUTH0_CLIENT_ID:-}
+      - VITE_AUTH0_AUDIENCE=${VITE_AUTH0_AUDIENCE:-}
     depends_on:
       - backend
 
@@ -22,6 +25,9 @@ services:
       - OLLAMA_HOST=http://host.containers.internal:11434
       - OLLAMA_TEMPERATURE=0.2
       - DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/secureship
+      - AUTH0_DOMAIN=${AUTH0_DOMAIN:-}
+      - AUTH0_AUDIENCE=${AUTH0_AUDIENCE:-}
+      - AUTH0_ADMIN_SUBS=${AUTH0_ADMIN_SUBS:-}
     depends_on:
       - postgres
 

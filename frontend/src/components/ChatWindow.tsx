@@ -19,6 +19,7 @@ export default function ChatWindow() {
   const [typing, setTyping] = useState(false)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
+  const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => () => timers.current.forEach(clearTimeout), [])
 
@@ -64,6 +65,11 @@ export default function ChatWindow() {
     },
   })
 
+  // Refocus the composer once a reply settles, but never while the modal is open.
+  useEffect(() => {
+    if (!mutation.isPending && !showModal) inputRef.current?.focus()
+  }, [mutation.isPending, showModal])
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
     const text = input.trim()
@@ -81,7 +87,7 @@ export default function ChatWindow() {
   return (
     <section
       aria-label="SecureShip support chat"
-      className="relative flex flex-col w-full max-w-2xl h-[90vh] bg-white rounded-2xl shadow-xl ring-1 ring-slate-200 overflow-hidden"
+      className="relative flex flex-col w-full max-w-2xl h-[100dvh] overflow-hidden bg-white sm:h-[90vh] sm:rounded-2xl sm:shadow-xl sm:ring-1 sm:ring-slate-200"
     >
       <header
         className={`px-5 py-4 text-white ${escalated ? 'bg-emerald-600' : 'bg-violet-600'}`}
@@ -145,8 +151,8 @@ export default function ChatWindow() {
           id="chat-input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          ref={inputRef}
           placeholder="Ask about a shipment..."
-          disabled={mutation.isPending}
           className={`flex-1 px-4 py-2.5 border border-slate-300 rounded-xl text-sm outline-none transition focus:ring-2 ${escalated ? 'focus:border-emerald-500 focus:ring-emerald-100' : 'focus:border-violet-500 focus:ring-violet-100'}`}
         />
         <button

@@ -11,13 +11,20 @@ There is no end-user login; a single Auth0 admin (Week 4) manages the data.
 - Full spec: `docs/project-requirements.md`
 - Working plan (goal / approach / done-when per increment): `docs/PLAN.md`
 
-**Current state: Week 3 complete** - the stack runs, the state machine gates a visitor through
+**Current state: Week 4 complete** - the stack runs, the state machine gates a visitor through
 conversational identity collection + a mocked 6-digit 2FA code to `verified`, and a verified user
 gets real shipment answers via tool-calling. The model is given a single `lookup_shipments` tool
 (no direct DB access); the backend executes it and always scopes the query to
 `session.customer_id`, never a model- or user-supplied id. That enforcement point lives in
 `backend/tools.py` (`run_tool`), and the verified tool loop is `_verified_reply` in `main.py`.
-Packages and the Auth0 admin panel are Week 4; hardening/docs are Week 5.
+
+Week 4 adds the **admin** side: a single admin logs in via **Auth0** and manages Customer /
+Shipment / Package data (full CRUD). The two identity systems are deliberately separate (Epic E4):
+admin auth lives in `backend/auth.py` (`require_admin`), the CRUD routes in `backend/admin.py`
+(one `APIRouter(prefix="/admin")` gated by `require_admin`), and the admin panel in
+`frontend/src/admin/`. The chat's conversational verification never touches Auth0, and no code
+path lets an admin token mutate `ChatSession` state or a chat session reach `/admin/*`.
+Hardening/docs/diagrams are Week 5.
 
 ## Environment constraints (non-negotiable, chosen deliberately)
 
@@ -57,6 +64,13 @@ cd frontend && npm run lint
 cd frontend && npm run build
 ```
 
+Admin (Week 4) needs Auth0 config in a root `.env` (gitignored; see `.env.example`):
+`AUTH0_DOMAIN` + `AUTH0_AUDIENCE` (backend) and `VITE_AUTH0_DOMAIN` + `VITE_AUTH0_CLIENT_ID` +
+`VITE_AUTH0_AUDIENCE` (frontend) - all public identifiers, no client secret. `docker-compose.yml`
+substitutes them into the containers, so applying new values needs a full
+`podman compose down && podman compose up -d` (not `--force-recreate`, which hits the
+podman-compose dependent-container quirk and skips the frontend).
+
 There is no automated test suite yet; verification is manual (curl `/health` and `/chat`,
 `psql` on `chat_sessions`, and the browser chat). See `docs/DEMO.md` for the exact checks.
 
@@ -67,6 +81,7 @@ There is no automated test suite yet; verification is manual (curl `/health` and
 - **The server owns the conversation.** The browser only keeps a `session_id`; the full transcript lives in Postgres as a `JSONB` array of `{role, content, timestamp}` on `ChatSession.transcript`. This is the seam where identity gating is enforced: session state and the verified `customer_id` live on the server, never trusted from the client.
 - **The gating enforcement point (Epic F, `backend/tools.py:run_tool`).** The tool layer always scopes shipment lookups to `session.customer_id` - never a model- or user-supplied id - and re-checks `state == verified` before running; the tool's `arguments` are deliberately ignored. This is the single auditable check, enforced outside the model's prompt. The model gets tools only in the verified branch (`_verified_reply` in `main.py`), which runs a capped tool-call loop. Keep this logic here; do not scatter it.
 - **Frontend types are generated, never hand-written.** FastAPI publishes `/openapi.json`; Orval (`frontend/orval.config.ts`) generates React Query hooks + TS types into `frontend/src/api/generated/` (do **not** hand-edit). All requests route through `frontend/src/api/mutator.ts`, which prepends `VITE_API_URL`. After changing backend request/response models or routes: restart the backend, then `npx orval`, then commit the regenerated output.
+- **The admin side is a second, separate identity system (Epic E).** A single admin logs in via **Auth0** and manages Customer/Shipment/Package data. The admin auth enforcement point is `backend/auth.py:require_admin` (built with the `auth0-fastapi-api` SDK - validates the Bearer access token against the tenant JWKS + issuer + audience; fails closed to 503 if unconfigured). It gates `backend/admin.py`, one `APIRouter(prefix="/admin")` with full CRUD. The panel is `frontend/src/admin/` (`/admin` route behind an Auth0 `ProtectedRoute`); `mutator.ts` attaches the Bearer token **only** to `/admin` URLs via a getter registered by `AuthTokenBridge`. Keep this separate from chat verification - the two never cross (Epic E4). Auth0 only does admin login; it never touches shipment data, which always comes from our Postgres.
 - **Async all the way:** FastAPI + httpx (Ollama) + SQLAlchemy 2.0 async engine + asyncpg. Use the `get_session` dependency for DB access in handlers.
 
 ## Conventions and gotchas
@@ -84,5 +99,6 @@ There is no automated test suite yet; verification is manual (curl `/health` and
 - **qwen3 is a thinking model:** `ollama_client.py` disables thinking and strips
   `<think>...</think>` defensively; keep both.
 - **Styling is Tailwind CSS v4** - utility classes in JSX; `@tailwindcss/vite` plugin, CSS-first config (`@import "tailwindcss";` in `src/index.css`). Extract a component before repeating long utility strings; avoid `@apply` as a general approach.
+- **Adding a frontend dependency means rebuilding the frontend image, not just `npm install`.** The container's `node_modules` is an anonymous volume (`- /app/node_modules`) that shadows the host's and survives `down`/`up`. A host-only `npm install` leaves the container missing the package (`Failed to resolve import ...`). Fix: `podman exec secureship_frontend_1 npm install` then restart the container, or `podman compose up -d --build frontend` for a durable rebuild.
 - Comments in code/config stay minimal and non-editorial.
 - Work plan-first: agree the approach in `docs/PLAN.md` before implementing a feature.

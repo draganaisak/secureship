@@ -7,7 +7,17 @@
 
 export * from './chatRequest';
 export * from './chatResponse';
+export * from './customerCreate';
+export * from './customerRead';
+export * from './customerUpdate';
 export * from './hTTPValidationError';
+export * from './packageCreate';
+export * from './packageRead';
+export * from './packageUpdate';
+export * from './shipmentCreate';
+export * from './shipmentRead';
+export * from './shipmentStatus';
+export * from './shipmentUpdate';
 export * from './validationError';
 export * from './validationErrorCtx';
 export * from './verifyCodeRequest';
