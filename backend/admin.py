@@ -1,10 +1,11 @@
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from enum import Enum
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,15 @@ router = APIRouter(
 )
 
 
+# Tracking numbers are MX followed by exactly 12 digits (14 chars). Enforced here
+# so the DB only ever holds well-formed values; the chat lookup can then trust them.
+TRACKING_PATTERN = r"^MX\d{12}$"
+
+# A required string must hold at least one non-whitespace character; whitespace is
+# trimmed before storing so the DB never holds blank-looking ("   ") values.
+NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
 class ShipmentStatus(str, Enum):
     label_created = "label_created"
     in_transit = "in_transit"
@@ -29,25 +39,56 @@ class ShipmentStatus(str, Enum):
 
 
 class CustomerCreate(BaseModel):
+    first_name: NonEmptyStr
+    last_name: NonEmptyStr
+    phone_number: NonEmptyStr
+    address: NonEmptyStr
+
+
+class CustomerUpdate(BaseModel):
+    first_name: NonEmptyStr | None = None
+    last_name: NonEmptyStr | None = None
+    phone_number: NonEmptyStr | None = None
+    address: NonEmptyStr | None = None
+
+
+# Read models deliberately carry no input constraints: a response model must
+# reflect whatever is stored, never re-validate it against write-time rules (one
+# non-conforming row would otherwise 500 the whole list).
+class CustomerRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
     first_name: str
     last_name: str
     phone_number: str
     address: str
 
 
-class CustomerUpdate(BaseModel):
-    first_name: str | None = None
-    last_name: str | None = None
-    phone_number: str | None = None
-    address: str | None = None
+class ShipmentCreate(BaseModel):
+    customer_id: uuid.UUID
+    tracking_number: str = Field(pattern=TRACKING_PATTERN)
+    status: ShipmentStatus
+    carrier: NonEmptyStr
+    origin: NonEmptyStr
+    destination: NonEmptyStr
+    estimated_delivery: date
+    last_update: datetime
 
 
-class CustomerRead(CustomerCreate):
+class ShipmentUpdate(BaseModel):
+    customer_id: uuid.UUID | None = None
+    tracking_number: str | None = Field(default=None, pattern=TRACKING_PATTERN)
+    status: ShipmentStatus | None = None
+    carrier: NonEmptyStr | None = None
+    origin: NonEmptyStr | None = None
+    destination: NonEmptyStr | None = None
+    estimated_delivery: date | None = None
+    last_update: datetime | None = None
+
+
+class ShipmentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
-
-
-class ShipmentCreate(BaseModel):
     customer_id: uuid.UUID
     tracking_number: str
     status: ShipmentStatus
@@ -58,39 +99,27 @@ class ShipmentCreate(BaseModel):
     last_update: datetime
 
 
-class ShipmentUpdate(BaseModel):
-    customer_id: uuid.UUID | None = None
-    tracking_number: str | None = None
-    status: ShipmentStatus | None = None
-    carrier: str | None = None
-    origin: str | None = None
-    destination: str | None = None
-    estimated_delivery: date | None = None
-    last_update: datetime | None = None
-
-
-class ShipmentRead(ShipmentCreate):
-    model_config = ConfigDict(from_attributes=True)
-    id: uuid.UUID
-
-
 class PackageCreate(BaseModel):
     shipment_id: uuid.UUID
-    description: str
-    weight_kg: Decimal
-    declared_value: Decimal
+    description: NonEmptyStr
+    weight_kg: Decimal = Field(ge=0)
+    declared_value: Decimal = Field(ge=0)
 
 
 class PackageUpdate(BaseModel):
     shipment_id: uuid.UUID | None = None
-    description: str | None = None
-    weight_kg: Decimal | None = None
-    declared_value: Decimal | None = None
+    description: NonEmptyStr | None = None
+    weight_kg: Decimal | None = Field(default=None, ge=0)
+    declared_value: Decimal | None = Field(default=None, ge=0)
 
 
-class PackageRead(PackageCreate):
+class PackageRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
+    shipment_id: uuid.UUID
+    description: str
+    weight_kg: Decimal
+    declared_value: Decimal
 
 
 async def _get_or_404(db: AsyncSession, model, obj_id: uuid.UUID):
@@ -108,9 +137,6 @@ async def _commit(db: AsyncSession) -> None:
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=400, detail="invalid reference or constraint violation")
-
-
-# --- Customers ---
 
 
 @router.get("/customers", response_model=list[CustomerRead], operation_id="listCustomers")
@@ -152,9 +178,6 @@ async def delete_customer(customer_id: uuid.UUID, db: AsyncSession = Depends(get
     await _commit(db)
 
 
-# --- Shipments ---
-
-
 @router.get("/shipments", response_model=list[ShipmentRead], operation_id="listShipments")
 async def list_shipments(db: AsyncSession = Depends(get_session)):
     rows = (await db.execute(select(Shipment).order_by(Shipment.updated_at.desc()))).scalars().all()
@@ -180,8 +203,15 @@ async def update_shipment(
     shipment_id: uuid.UUID, body: ShipmentUpdate, db: AsyncSession = Depends(get_session)
 ):
     obj = await _get_or_404(db, Shipment, shipment_id)
-    for field, value in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    content_changed = any(
+        field != "last_update" and getattr(obj, field) != value
+        for field, value in updates.items()
+    )
+    for field, value in updates.items():
         setattr(obj, field, value)
+    if content_changed:
+        obj.last_update = datetime.now(timezone.utc)
     await _commit(db)
     await db.refresh(obj)
     return obj
@@ -192,9 +222,6 @@ async def delete_shipment(shipment_id: uuid.UUID, db: AsyncSession = Depends(get
     obj = await _get_or_404(db, Shipment, shipment_id)
     await db.delete(obj)
     await _commit(db)
-
-
-# --- Packages ---
 
 
 @router.get("/packages", response_model=list[PackageRead], operation_id="listPackages")

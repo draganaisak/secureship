@@ -4,9 +4,10 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin import router as admin_router
@@ -21,6 +22,7 @@ from verification import (
     STATE_COLLECTING_IDENTITY,
     STATE_ESCALATED,
     STATE_VERIFIED,
+    code_expired,
     issue_code,
     match_customer,
     verify_code,
@@ -45,10 +47,39 @@ app.add_middleware(
 
 app.include_router(admin_router)
 
+SUPPORT_URL = "https://secureship.com/support"
+OUT_OF_SCOPE = (
+    "I can only help you check the status of your existing shipments here. For "
+    "anything else - like sending a package, changing an address, billing, returns, "
+    f"or cancellations - please visit {SUPPORT_URL}."
+)
+
+OTHER_ACCOUNT = (
+    "I can only look up shipments on your own account, not anyone else's. If you "
+    "have a tracking number for one of your shipments, share it and I'll check it."
+)
+
+SCOPE_RULES = (
+    " The only thing you can do is report the status of the customer's existing "
+    "shipments. You cannot send, create, cancel, reroute, or modify shipments, change "
+    "addresses, or handle billing, returns, or refunds, and you must never offer to or "
+    "imply you can. If the user asks for anything other than checking the status of an "
+    f'existing shipment, reply exactly with: "{OUT_OF_SCOPE}"'
+)
+
 SYSTEM_PROMPT = (
     "You are SecureShip's shipment-support assistant. "
     "Be concise, friendly, and professional. "
-    "Help customers with questions about parcel shipments and deliveries."
+    "Help customers check the status of their parcel shipments."
+    + SCOPE_RULES
+)
+
+ANON_SYSTEM = SYSTEM_PROMPT + (
+    " The customer is not yet verified. You must verify their identity before checking "
+    "any shipment, so never imply a tracking number alone is enough. If they greet you "
+    "or ask what you can do, briefly say you can check the status of their shipments "
+    "once you verify their identity, and invite them to say they want to check one. Do "
+    "not solicit a tracking number yet."
 )
 
 VERIFIED_SYSTEM = SYSTEM_PROMPT + (
@@ -65,7 +96,10 @@ VERIFIED_SYSTEM = SYSTEM_PROMPT + (
     "them. Do not say you are looking it up and then stop - call the tool and answer in "
     "the same reply. Present each shipment on its own lines: a header '📦 Shipment "
     "<tracking>', then '• Status:', '• Carrier:', '• From:', '• To:', '• Estimated "
-    "delivery:', and '• Last update:', one per line."
+    "delivery:', and '• Last update:', one per line. If the customer asks about a "
+    "shipment that is not their own - a friend's, a family member's, anyone else's, or "
+    "any name or account other than theirs - do not treat it as out of scope; reply "
+    f'exactly with: "{OTHER_ACCOUNT}"'
 )
 
 ASK_TRACKING = (
@@ -98,6 +132,9 @@ EXPIRED_MSG = (
 )
 ESCALATION_ACK = "Thanks for your patience - connecting you with a member of our team."
 TOOLS_FALLBACK = "I'm having trouble looking that up right now. Please try again in a moment."
+SERVICE_BUSY_MSG = (
+    "Sorry, the assistant is temporarily unavailable. Please try again in a moment."
+)
 
 MAX_TOOL_ROUNDS = 4
 
@@ -120,7 +157,7 @@ def _log_mock_sms(session_id: uuid.UUID, code: str) -> None:
 
 
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(min_length=1, max_length=4000)
     session_id: uuid.UUID | None = None
 
 
@@ -129,13 +166,14 @@ class ChatResponse(BaseModel):
     session_id: uuid.UUID
     state: str
     show_code_modal: bool = False
+    code_expires_at: datetime | None = None
     escalate: bool = False
     first_name: str | None = None
 
 
 class VerifyCodeRequest(BaseModel):
     session_id: uuid.UUID
-    code: str
+    code: str = Field(min_length=1, max_length=12)
 
 
 class VerifyCodeResponse(BaseModel):
@@ -192,7 +230,7 @@ async def _verified_reply(
     return TOOLS_FALLBACK, tool_names
 
 
-_TRACKING_RE = re.compile(r"MX\d{12}", re.IGNORECASE)
+_TRACKING_RE = re.compile(r"MX\d+", re.IGNORECASE)
 _LIST_ALL_RE = re.compile(r"\b(all|every|everything|list)\b", re.IGNORECASE)
 
 
@@ -323,6 +361,19 @@ async def _collect_identity(
     return ASK_MISSING.format(missing=", ".join(_FIELD_LABELS[k] for k in missing_keys)), False
 
 
+async def _is_topic_change(transcript: list[dict], intent: dict) -> bool:
+    """True when the latest message is an off-topic question mid-verification.
+
+    Identity provision also reads as not-wanting-a-shipment, so intent alone can't
+    tell "123 Main St" from "what are your hours?". We additionally check that the
+    latest turn carries no identity before treating it as a topic change.
+    """
+    if intent["wants_shipment"]:
+        return False
+    latest = await extract_identity([transcript[-1]])
+    return not any(latest.values())
+
+
 @app.post("/chat", response_model=ChatResponse, operation_id="sendChat")
 async def chat_endpoint(req: ChatRequest, db: AsyncSession = Depends(get_session)):
     session = None
@@ -345,33 +396,55 @@ async def chat_endpoint(req: ChatRequest, db: AsyncSession = Depends(get_session
     first_name = None
     tool_calls_made: list[str] = []
 
-    intent = await classify_intent(transcript)
+    try:
+        intent = await classify_intent(transcript)
 
-    if intent["wants_human"]:
-        first_name = await _known_first_name(db, session, transcript)
-        session.state = STATE_ESCALATED
-        escalate = True
-        reply = ESCALATION_ACK
+        if intent["wants_human"]:
+            first_name = await _known_first_name(db, session, transcript)
+            session.state = STATE_ESCALATED
+            escalate = True
+            reply = ESCALATION_ACK
 
-    elif session.state == STATE_ANONYMOUS:
-        if intent["wants_shipment"]:
-            session.state = STATE_COLLECTING_IDENTITY
-            reply, show_code_modal = await _collect_identity(db, session, transcript)
+        elif session.state == STATE_ANONYMOUS:
+            if intent["wants_shipment"]:
+                session.state = STATE_COLLECTING_IDENTITY
+                reply, show_code_modal = await _collect_identity(db, session, transcript)
+            else:
+                reply = await _faq_reply(transcript, ANON_SYSTEM)
+
+        elif session.state == STATE_COLLECTING_IDENTITY:
+            if await _is_topic_change(transcript, intent):
+                reply = await _faq_reply(transcript, ANON_SYSTEM)
+            else:
+                reply, show_code_modal = await _collect_identity(db, session, transcript)
+
+        elif session.state == STATE_CODE_SENT:
+            if code_expired(session):
+                # The issued code lapsed; drop back to collecting identity so the
+                # user can re-share name + phone and receive a fresh code.
+                session.state = STATE_COLLECTING_IDENTITY
+                if await _is_topic_change(transcript, intent):
+                    reply = await _faq_reply(transcript, ANON_SYSTEM)
+                else:
+                    reply, show_code_modal = await _collect_identity(db, session, transcript)
+            else:
+                show_code_modal = True
+                if await _is_topic_change(transcript, intent):
+                    reply = await _faq_reply(transcript, ANON_SYSTEM)
+                else:
+                    reply = ENTER_CODE_NUDGE
+
+        elif session.state == STATE_VERIFIED:
+            reply, tool_calls_made = await _verified_turn(db, session, transcript)
+
         else:
-            reply = await _faq_reply(transcript, SYSTEM_PROMPT)
-
-    elif session.state == STATE_COLLECTING_IDENTITY:
-        reply, show_code_modal = await _collect_identity(db, session, transcript)
-
-    elif session.state == STATE_CODE_SENT:
-        show_code_modal = True
-        reply = ENTER_CODE_NUDGE
-
-    elif session.state == STATE_VERIFIED:
-        reply, tool_calls_made = await _verified_turn(db, session, transcript)
-
-    else:
-        reply = await _faq_reply(transcript, SYSTEM_PROMPT)
+            reply = await _faq_reply(transcript, ANON_SYSTEM)
+    except (httpx.HTTPError, KeyError):
+        reply = SERVICE_BUSY_MSG
+        show_code_modal = session.state == STATE_CODE_SENT
+        escalate = False
+        first_name = None
+        tool_calls_made = []
 
     assistant_turn = {
         "role": "assistant",
@@ -389,6 +462,7 @@ async def chat_endpoint(req: ChatRequest, db: AsyncSession = Depends(get_session
         session_id=session.id,
         state=session.state,
         show_code_modal=show_code_modal,
+        code_expires_at=session.code_expires_at if show_code_modal else None,
         escalate=escalate,
         first_name=first_name,
     )

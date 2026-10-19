@@ -6,11 +6,11 @@
  */
 
 export interface PackageRead {
+  id: string;
   shipment_id: string;
   description: string;
   /** @pattern ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$ */
   weight_kg: string;
   /** @pattern ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$ */
   declared_value: string;
-  id: string;
 }

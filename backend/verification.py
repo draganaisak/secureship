@@ -14,7 +14,7 @@ STATE_CODE_SENT = "code_sent"
 STATE_VERIFIED = "verified"
 STATE_ESCALATED = "escalated_to_human"
 
-CODE_TTL = timedelta(minutes=10)
+CODE_TTL = timedelta(minutes=5)
 MAX_ATTEMPTS = 3
 
 
@@ -59,6 +59,14 @@ class CodeCheck:
     ok: bool
     reason: str
     attempts_remaining: int = 0
+
+
+def code_expired(session: ChatSession) -> bool:
+    return (
+        session.code is None
+        or session.code_expires_at is None
+        or _now() > session.code_expires_at
+    )
 
 
 def verify_code(session: ChatSession, submitted: str) -> CodeCheck:

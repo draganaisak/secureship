@@ -7,6 +7,7 @@
 
 export interface PackageCreate {
   shipment_id: string;
+  /** @minLength 1 */
   description: string;
   weight_kg: number | string;
   declared_value: number | string;

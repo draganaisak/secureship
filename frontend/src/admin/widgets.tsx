@@ -1,20 +1,6 @@
-import { type ReactNode } from 'react'
-
-export const inputClass =
-  'w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm outline-none transition focus:ring-2 focus:border-violet-500 focus:ring-violet-100'
-export const btnPrimary =
-  'px-3 py-1.5 rounded-lg bg-violet-600 text-white text-sm font-semibold cursor-pointer hover:bg-violet-700 disabled:opacity-50 disabled:cursor-default transition'
-export const btnGhost =
-  'px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 text-sm cursor-pointer hover:bg-slate-50 transition'
-export const btnDanger =
-  'px-2.5 py-1 rounded-lg text-rose-600 text-sm cursor-pointer hover:bg-rose-50 transition'
-export const btnDangerSolid =
-  'px-3 py-1.5 rounded-lg bg-rose-600 text-white text-sm font-semibold cursor-pointer hover:bg-rose-700 disabled:opacity-50 disabled:cursor-default transition'
-export const th =
-  'text-left font-semibold text-slate-500 px-3 py-2 bg-slate-50 border-b border-slate-200'
-export const td = 'px-3 py-2 text-slate-700 align-top'
-export const card = 'rounded-xl border border-slate-200 bg-white p-4'
-export const tableCard = 'hidden md:block rounded-xl border border-slate-200 bg-white'
+import { useEffect, useRef, type ReactNode } from 'react'
+import { Button } from '../ui/Button'
+import { describeAdminError } from './errors'
 
 const statusStyles: Record<string, string> = {
   label_created: 'bg-slate-100 text-slate-600',
@@ -89,14 +75,8 @@ export function DeleteButton({
   )
 }
 
-export function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="flex flex-col gap-1 text-sm">
-      <span className="text-slate-600">{label}</span>
-      {children}
-    </label>
-  )
-}
+const FOCUSABLE =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 export function Modal({
   title,
@@ -107,16 +87,58 @@ export function Modal({
   onClose: () => void
   children: ReactNode
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  // onClose may be a fresh closure each render; keep it in a ref so the main
+  // effect runs once (focus-on-open / restore-on-close), not on every re-render.
+  const onCloseRef = useRef(onClose)
+  useEffect(() => {
+    onCloseRef.current = onClose
+  })
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+    const prevFocused = document.activeElement as HTMLElement | null
+    dialog.focus()
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onCloseRef.current()
+        return
+      }
+      if (e.key !== 'Tab') return
+      const items = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE))
+      if (items.length === 0) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+
+    dialog.addEventListener('keydown', onKeyDown)
+    return () => {
+      dialog.removeEventListener('keydown', onKeyDown)
+      prevFocused?.focus?.()
+    }
+  }, [])
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl bg-white shadow-xl ring-1 ring-slate-200"
+        className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl bg-white shadow-xl ring-1 ring-slate-200 outline-none"
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
           <h3 className="font-semibold text-slate-800">{title}</h3>
@@ -140,6 +162,7 @@ export function ConfirmDialog({
   message,
   confirmLabel = 'Delete',
   pending,
+  error,
   onConfirm,
   onCancel,
 }: {
@@ -147,17 +170,23 @@ export function ConfirmDialog({
   message: string
   confirmLabel?: string
   pending: boolean
+  error?: string | null
   onConfirm: () => void
   onCancel: () => void
 }) {
   return (
     <Modal title={title} onClose={onCancel}>
       <p className="text-sm text-slate-600">{message}</p>
+      {error && (
+        <p role="alert" className="pt-3 text-sm text-rose-600">
+          {error}
+        </p>
+      )}
       <div className="flex justify-end gap-2 pt-5">
-        <button type="button" className={btnGhost} onClick={onCancel}>Cancel</button>
-        <button type="button" className={btnDangerSolid} onClick={onConfirm} disabled={pending}>
+        <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+        <Button variant="danger" onClick={onConfirm} disabled={pending}>
           {confirmLabel}
-        </button>
+        </Button>
       </div>
     </Modal>
   )
@@ -184,14 +213,7 @@ export function ManagerShell({
   error?: unknown
   children: ReactNode
 }) {
-  const forbidden =
-    !!error &&
-    typeof error === 'object' &&
-    'status' in error &&
-    (error as { status?: number }).status === 403
-  const errorMessage = forbidden
-    ? 'Your account is not authorized for admin access. Ask the owner to add your Auth0 user id to AUTH0_ADMIN_SUBS.'
-    : "Couldn't load data. Make sure you're signed in as an admin."
+  const errorMessage = describeAdminError(error, 'load')
   return (
     <section className="flex flex-col">
       <div className="sticky top-0 z-20 bg-slate-100 py-2 sm:flex sm:h-14 sm:items-center sm:justify-between sm:gap-3 sm:py-0">
@@ -204,13 +226,9 @@ export function ManagerShell({
             placeholder="Search..."
             className="min-w-0 flex-1 px-3 py-1.5 border border-slate-300 rounded-lg text-sm outline-none transition focus:ring-2 focus:border-violet-500 focus:ring-violet-100 sm:w-56 sm:flex-none"
           />
-          <button
-            type="button"
-            className={`${btnPrimary} shrink-0 whitespace-nowrap`}
-            onClick={onAdd}
-          >
+          <Button className="shrink-0 whitespace-nowrap" onClick={onAdd}>
             {addLabel}
-          </button>
+          </Button>
         </div>
       </div>
       {isError && (

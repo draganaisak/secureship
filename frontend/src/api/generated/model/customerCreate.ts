@@ -6,8 +6,12 @@
  */
 
 export interface CustomerCreate {
+  /** @minLength 1 */
   first_name: string;
+  /** @minLength 1 */
   last_name: string;
+  /** @minLength 1 */
   phone_number: string;
+  /** @minLength 1 */
   address: string;
 }

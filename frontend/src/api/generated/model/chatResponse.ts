@@ -10,6 +10,7 @@ export interface ChatResponse {
   session_id: string;
   state: string;
   show_code_modal?: boolean;
+  code_expires_at?: string | null;
   escalate?: boolean;
   first_name?: string | null;
 }

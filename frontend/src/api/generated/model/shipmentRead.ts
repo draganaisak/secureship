@@ -7,6 +7,7 @@
 import type { ShipmentStatus } from './shipmentStatus';
 
 export interface ShipmentRead {
+  id: string;
   customer_id: string;
   tracking_number: string;
   status: ShipmentStatus;
@@ -15,5 +16,4 @@ export interface ShipmentRead {
   destination: string;
   estimated_delivery: string;
   last_update: string;
-  id: string;
 }

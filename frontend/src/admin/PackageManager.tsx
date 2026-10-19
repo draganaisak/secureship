@@ -1,4 +1,3 @@
-import { useState, type FormEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuth0 } from '@auth0/auth0-react'
 import {
@@ -9,7 +8,11 @@ import {
   getListPackagesQueryKey,
 } from '../api/generated/endpoints'
 import type { PackageRead } from '../api/generated/model'
-import { Field, ManagerShell, Modal, ConfirmDialog, EditButton, DeleteButton, inputClass, btnPrimary, btnGhost, th, td, card, tableCard } from './widgets'
+import { ManagerShell, Modal, ConfirmDialog, EditButton, DeleteButton } from './widgets'
+import { Button } from '../ui/Button'
+import { TextField } from '../ui/FormField'
+import { DataTable } from '../ui/DataTable'
+import { useCrudManager } from './useCrudManager'
 
 interface Draft {
   shipment_id: string
@@ -29,62 +32,52 @@ export default function PackageManager() {
   const update = useUpdatePackage({ mutation: { onSuccess: invalidate } })
   const remove = useDeletePackage({ mutation: { onSuccess: invalidate } })
 
-  const [open, setOpen] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [draft, setDraft] = useState<Draft>(EMPTY)
-  const [pendingDelete, setPendingDelete] = useState<{ id: string; label: string } | null>(null)
-  const [q, setQ] = useState('')
-
-  const term = q.trim().toLowerCase()
-  const rows = (list.data?.data ?? []).filter(
-    (p) => !term || `${p.description} ${p.shipment_id}`.toLowerCase().includes(term),
-  )
-  const set = (k: keyof Draft, v: string) => setDraft((d) => ({ ...d, [k]: v }))
-
-  const openCreate = () => {
-    setEditingId(null)
-    setDraft(EMPTY)
-    setOpen(true)
-  }
-  const openEdit = (p: PackageRead) => {
-    setEditingId(p.id)
-    setDraft({
+  const mgr = useCrudManager<PackageRead, Draft>({
+    empty: EMPTY,
+    rowId: (p) => p.id,
+    toDraft: (p) => ({
       shipment_id: p.shipment_id,
       description: p.description,
       weight_kg: String(p.weight_kg),
       declared_value: String(p.declared_value),
-    })
-    setOpen(true)
-  }
-  const close = () => {
-    setOpen(false)
-    setEditingId(null)
-    setDraft(EMPTY)
-  }
+    }),
+    searchText: (p) => `${p.description} ${p.shipment_id}`,
+    saving: create.isPending || update.isPending,
+    deleting: remove.isPending,
+    saveError: create.error ?? update.error,
+    deleteError: remove.error,
+    resetErrors: () => {
+      create.reset()
+      update.reset()
+      remove.reset()
+    },
+    onSubmit: ({ editingId, draft, done }) => {
+      if (editingId) {
+        update.mutate({ packageId: editingId, data: draft }, { onSuccess: done })
+      } else {
+        create.mutate({ data: draft }, { onSuccess: done })
+      }
+    },
+    onDelete: ({ id, done }) => remove.mutate({ packageId: id }, { onSuccess: done }),
+  })
 
-  function submit(e: FormEvent) {
-    e.preventDefault()
-    const data = {
-      shipment_id: draft.shipment_id,
-      description: draft.description,
-      weight_kg: draft.weight_kg,
-      declared_value: draft.declared_value,
-    }
-    if (editingId) {
-      update.mutate({ packageId: editingId, data }, { onSuccess: close })
-    } else {
-      create.mutate({ data }, { onSuccess: close })
-    }
-  }
-
-  const saving = create.isPending || update.isPending
+  const rows = mgr.filterRows(list.data?.data ?? [])
 
   return (
     <>
-      <ManagerShell title="Packages" addLabel="+ Add package" onAdd={openCreate} search={q} onSearch={setQ} isLoading={list.isLoading} isError={list.isError} error={list.error}>
-        <ul className="flex flex-col gap-3 md:hidden">
-          {rows.map((p) => (
-            <li key={p.id} className={card}>
+      <ManagerShell title="Packages" addLabel="+ Add package" onAdd={mgr.openCreate} search={mgr.q} onSearch={mgr.setQ} isLoading={list.isLoading} isError={list.isError} error={list.error}>
+        <DataTable
+          rows={rows}
+          getRowKey={(p) => p.id}
+          emptyText={mgr.term ? 'No matches.' : 'No packages yet.'}
+          columns={[
+            { header: 'Description', cell: (p) => p.description },
+            { header: 'Weight (kg)', cell: (p) => p.weight_kg },
+            { header: 'Declared value', cell: (p) => p.declared_value },
+            { header: 'Shipment', cell: (p) => p.shipment_id, className: 'font-mono text-xs' },
+          ]}
+          renderCard={(p) => (
+            <>
               <p className="font-medium break-words text-slate-800">{p.description}</p>
               <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
                 <dt className="text-slate-400">Weight</dt>
@@ -94,89 +87,47 @@ export default function PackageManager() {
                 <dt className="text-slate-400">Shipment</dt>
                 <dd className="font-mono text-xs break-all text-slate-700">{p.shipment_id}</dd>
               </dl>
-              <div className="mt-3 flex justify-end gap-1">
-                <EditButton onClick={() => openEdit(p)} />
-                <DeleteButton onClick={() => setPendingDelete({ id: p.id, label: p.description })} />
-              </div>
-            </li>
-          ))}
-          {rows.length === 0 && (
-            <li className={`${card} text-sm text-slate-400`}>{term ? 'No matches.' : 'No packages yet.'}</li>
+            </>
           )}
-        </ul>
-
-        <div className={tableCard}>
-          <table className="w-full text-sm">
-            <thead className="sticky top-14 z-10">
-              <tr>
-                <th className={th}>Description</th>
-                <th className={th}>Weight (kg)</th>
-                <th className={th}>Declared value</th>
-                <th className={th}>Shipment</th>
-                <th className={th}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((p) => (
-                <tr key={p.id} className="border-b border-slate-100 last:border-0">
-                  <td className={td}>{p.description}</td>
-                  <td className={td}>{p.weight_kg}</td>
-                  <td className={td}>{p.declared_value}</td>
-                  <td className={`${td} font-mono text-xs`}>{p.shipment_id}</td>
-                  <td className={`${td} whitespace-nowrap text-right`}>
-                    <div className="flex justify-end gap-1">
-                      <EditButton onClick={() => openEdit(p)} />
-                      <DeleteButton onClick={() => setPendingDelete({ id: p.id, label: p.description })} />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {rows.length === 0 && (
-                <tr>
-                  <td className={`${td} text-slate-400`} colSpan={5}>{term ? 'No matches.' : 'No packages yet.'}</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+          actions={(p) => (
+            <>
+              <EditButton onClick={() => mgr.openEdit(p)} />
+              <DeleteButton onClick={() => mgr.askDelete(p.id, p.description)} />
+            </>
+          )}
+        />
       </ManagerShell>
 
-      {open && (
-        <Modal title={editingId ? 'Edit package' : 'Add package'} onClose={close}>
-          <form onSubmit={submit} className="flex flex-col gap-3">
+      {mgr.open && (
+        <Modal title={mgr.editingId ? 'Edit package' : 'Add package'} onClose={mgr.close}>
+          <form onSubmit={mgr.submit} noValidate className="flex flex-col gap-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field label="Shipment ID">
-                <input className={inputClass} value={draft.shipment_id} onChange={(e) => set('shipment_id', e.target.value)} placeholder="uuid" required />
-              </Field>
-              <Field label="Description">
-                <input className={inputClass} value={draft.description} onChange={(e) => set('description', e.target.value)} required />
-              </Field>
-              <Field label="Weight (kg)">
-                <input type="number" step="0.01" min="0" className={inputClass} value={draft.weight_kg} onChange={(e) => set('weight_kg', e.target.value)} required />
-              </Field>
-              <Field label="Declared value">
-                <input type="number" step="0.01" min="0" className={inputClass} value={draft.declared_value} onChange={(e) => set('declared_value', e.target.value)} required />
-              </Field>
+              <TextField label="Shipment ID" name="shipment_id" value={mgr.draft.shipment_id} onChange={(e) => mgr.set('shipment_id', e.target.value)} error={mgr.errors.shipment_id} placeholder="uuid" required />
+              <TextField label="Description" name="description" value={mgr.draft.description} onChange={(e) => mgr.set('description', e.target.value)} error={mgr.errors.description} required />
+              <TextField label="Weight (kg)" name="weight_kg" type="number" step="0.01" min="0" value={mgr.draft.weight_kg} onChange={(e) => mgr.set('weight_kg', e.target.value)} error={mgr.errors.weight_kg} required />
+              <TextField label="Declared value" name="declared_value" type="number" step="0.01" min="0" value={mgr.draft.declared_value} onChange={(e) => mgr.set('declared_value', e.target.value)} error={mgr.errors.declared_value} required />
             </div>
+            {mgr.saveError && (
+              <p role="alert" className="text-sm text-rose-600">{mgr.saveError}</p>
+            )}
             <div className="flex justify-end gap-2 pt-1">
-              <button type="button" className={btnGhost} onClick={close}>Cancel</button>
-              <button type="submit" className={btnPrimary} disabled={saving}>
-                {editingId ? 'Save changes' : 'Add package'}
-              </button>
+              <Button variant="ghost" onClick={mgr.close}>Cancel</Button>
+              <Button type="submit" disabled={mgr.saving || !mgr.dirty}>
+                {mgr.editingId ? 'Save changes' : 'Add package'}
+              </Button>
             </div>
           </form>
         </Modal>
       )}
 
-      {pendingDelete && (
+      {mgr.pendingDelete && (
         <ConfirmDialog
           title="Delete package"
-          message={`Delete package "${pendingDelete.label}"? This can't be undone.`}
-          pending={remove.isPending}
-          onCancel={() => setPendingDelete(null)}
-          onConfirm={() =>
-            remove.mutate({ packageId: pendingDelete.id }, { onSuccess: () => setPendingDelete(null) })
-          }
+          message={`Delete package "${mgr.pendingDelete.label}"? This can't be undone.`}
+          pending={mgr.deleting}
+          error={mgr.deleteError}
+          onCancel={mgr.cancelDelete}
+          onConfirm={mgr.confirmDelete}
         />
       )}
     </>

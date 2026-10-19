@@ -11,12 +11,18 @@ There is no end-user login; a single Auth0 admin (Week 4) manages the data.
 - Full spec: `docs/project-requirements.md`
 - Working plan (goal / approach / done-when per increment): `docs/PLAN.md`
 
-**Current state: Week 4 complete** - the stack runs, the state machine gates a visitor through
-conversational identity collection + a mocked 6-digit 2FA code to `verified`, and a verified user
-gets real shipment answers via tool-calling. The model is given a single `lookup_shipments` tool
-(no direct DB access); the backend executes it and always scopes the query to
-`session.customer_id`, never a model- or user-supplied id. That enforcement point lives in
+**Current state: Week 5 in progress (hardening + docs)** - the stack runs, the state machine gates
+a visitor through conversational identity collection + a mocked 6-digit 2FA code to `verified`, and
+a verified user gets real shipment answers via tool-calling. The model is given a single
+`lookup_shipments` tool (no direct DB access); the backend executes it and always scopes the query
+to `session.customer_id`, never a model- or user-supplied id. That enforcement point lives in
 `backend/tools.py` (`run_tool`), and the verified tool loop is `_verified_reply` in `main.py`.
+
+Week 5 hardening added: the `/chat` LLM calls are wrapped so an Ollama outage returns a friendly
+`SERVICE_BUSY_MSG` instead of a 500; off-topic questions mid-verification are answered via FAQ
+while the gate state is preserved (`_is_topic_change` in `main.py`); request models carry basic
+length bounds. The human-facing `README.md` and the regenerated diagrams (`docs/diagrams/`) are
+also Week 5.
 
 Week 4 adds the **admin** side: a single admin logs in via **Auth0** and manages Customer /
 Shipment / Package data (full CRUD). The two identity systems are deliberately separate (Epic E4):
@@ -86,19 +92,7 @@ There is no automated test suite yet; verification is manual (curl `/health` and
 
 ## Conventions and gotchas
 
-- **Give new routes an explicit `operation_id`** (e.g. `operation_id="sendChat"`) so Orval generates clean hook names (`useSendChat`) instead of `useChatEndpointChatPost`.
-- **Orval response types are discriminated unions** (`{data, status}` for 200 vs 422). Narrow on`response.status === 200` before reading `response.data`, even though `mutator.ts` throws on non-2xx.
-- **JSONB updates must reassign**, not mutate in place - `session.transcript = [...]`, because
-  SQLAlchemy does not track an in-place `.append`.
-- **Column `default=` applies at INSERT (flush), not at object construction.** A freshly built
-  `ChatSession()` has `state=None`, `code_attempts=None`, etc. until committed - so set gate-
-  critical fields explicitly when creating (`ChatSession(state=STATE_ANONYMOUS)`) rather than
-  reading them pre-flush. The state branch also fails **closed**: unknown/None state routes to the
-  anonymous FAQ, never the verified/tool branch.
-- **Persona/system prompt is prepended server-side** in `main.py` and is never stored as a user turn in the transcript.
-- **qwen3 is a thinking model:** `ollama_client.py` disables thinking and strips
-  `<think>...</think>` defensively; keep both.
-- **Styling is Tailwind CSS v4** - utility classes in JSX; `@tailwindcss/vite` plugin, CSS-first config (`@import "tailwindcss";` in `src/index.css`). Extract a component before repeating long utility strings; avoid `@apply` as a general approach.
-- **Adding a frontend dependency means rebuilding the frontend image, not just `npm install`.** The container's `node_modules` is an anonymous volume (`- /app/node_modules`) that shadows the host's and survives `down`/`up`. A host-only `npm install` leaves the container missing the package (`Failed to resolve import ...`). Fix: `podman exec secureship_frontend_1 npm install` then restart the container, or `podman compose up -d --build frontend` for a durable rebuild.
-- Comments in code/config stay minimal and non-editorial.
-- Work plan-first: agree the approach in `docs/PLAN.md` before implementing a feature.
+The project's conventions and gotchas live in their own rules file, imported here so they load
+every session. Add new rules there, not inline below.
+
+@.claude/CONVENTIONS.md

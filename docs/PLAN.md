@@ -36,7 +36,7 @@ Implement and enforce the conversation state machine (`docs/diagrams/architectur
 - Gate is enforced in the backend, outside the model's prompt, at a single point (`backend/verification.py`).
 - No formal tool-calling yet (that is Week 3 / Epic F). The state machine is backend-orchestrated; the LLM is used only to read intent and extract identity fields (JSON mode).
 - Identity match key: last name (case-insensitive) + phone (digits-only). Address is collected but not used to match. A non-match returns a neutral message (Epic B3).
-- 2FA: 6-digit code, 3 attempts then invalidate, 10-minute expiry (Epic C3/C4). Mock SMS logs the code to backend stdout only, never PII.
+- 2FA: 6-digit code, 3 attempts then invalidate, 5-minute expiry (`CODE_TTL`, Epic C3/C4). Mock SMS logs the code to backend stdout only, never PII.
 - Live 2FA state stored as columns on `ChatSession` (no second store).
 
 ## Week 2 increments (done-when)
@@ -105,7 +105,66 @@ session (Epic E4). Per spec 4.5, the Auth0 slice is built **using the Auth0 Agen
   live DB); chat works tokenless and cannot reach `/admin/*`; admin auth never touches
   `ChatSession`. DONE.
 
-## Out of scope until Week 5
+## Week 5 goal (Phase 5)
 
-Diagram regen, README finalize, edge-case hardening, and optional stretch goals (Twilio,
-containerized Ollama, admin chat-session viewer, codegen-suggestion skill).
+Harden, document, and finalize for the final demo. Required: the three spec items (README,
+diagrams regenerated against the real build, a basic edge-case pass). Stretch goals are explicitly
+out of scope (team's choice, zero weight).
+
+## Week 5 decisions
+
+- Keep the edge-case pass **basic** (spec wording) - fix the two real gaps and add light input
+  bounds; do not gold-plate (no strict phone/format regex, no resend rate-limiting).
+- The LLM-failure guard lives at the `main.py` call boundary (one `try/except` around the
+  `/chat` state branches), not in `ollama_client`, so `_post` still fails loudly where that is
+  correct.
+- Topic-change detection uses identity extraction on the latest turn (`_is_topic_change`), since
+  intent alone can't tell identity provision from an off-topic question (both read as
+  `wants_shipment=false`). State is preserved so the user can resume.
+- Diagrams are corrected to the **real** implementation: identity/2FA are backend-driven (not
+  model tool calls), the only model tool is `lookup_shipments`, state lives in the Postgres
+  `ChatSession` row, and the states are the five real ones (no `IdentityRejected`/`AwaitingCode`/
+  `CodeExpired` as persisted states).
+
+## Week 5 increments (done-when)
+
+- **Inc 21** LLM-failure resilience. *Done:* `/chat` wraps intent + reply generation in
+  `try/except (httpx.HTTPError, KeyError)` returning `SERVICE_BUSY_MSG` (friendly 200, not 500);
+  modal preserved in `code_sent`. Code-verified; manual stop-Ollama check documented.
+- **Inc 22** Topic-change mid-verification. *Done:* `collecting_identity` and `code_sent` answer
+  an off-topic question via `_faq_reply` and keep state; verified by curl (detour answered, then
+  identity resumes to `code_sent`).
+- **Inc 23** Input bounds. *Done:* `ChatRequest.message` (1-4000), `VerifyCodeRequest.code`
+  (1-12), admin required string fields `min_length=1`; empty/oversized -> 422. Orval regenerated.
+- **Inc 24** README. *Done:* human-facing root `README.md` - what it is, security model, stack,
+  prerequisites, run commands, layout, demo pointer, constraints.
+- **Inc 25** Diagrams regenerated against the real build (`docs/diagrams/architecture.md`); the
+  five real states, backend-driven identity/2FA, single `lookup_shipments` model tool.
+
+## Post-plan hardening, polish, and tooling (Inc 26-30)
+
+These landed after the original Week 5 plan, driven by manual testing and an independent review pass.
+
+- **Inc 26** 2FA code-expiry UX. *Done:* `CODE_TTL` 10->5 min; `/chat` returns `code_expires_at`;
+  `CodeModal` shows a live countdown; `code_expired` + the `code_sent` branch drop an expired
+  session back to `collecting_identity` so a fresh name+phone reissues a code; "Start over" closes
+  the modal and prompts a restart. Backend + curl verified.
+- **Inc 27** Admin write-boundary validation. *Done:* tracking `^MX\d{12}$`; `NonEmptyStr`
+  (strip + non-empty) on required strings; `Field(ge=0)` on package decimals; `*Read` models kept
+  standalone/lenient (the one-bad-row-500 fix). Orval regenerated.
+- **Inc 28** Admin form UX + a11y. *Done:* `useCrudManager` centralizes add/edit/delete/search/
+  dirty state + the browser Constraint Validation API; `FormField` renders the required `*` and
+  inline errors; `last_update` defaults to now; save/delete mutation errors surfaced; the shared
+  `Modal` traps focus and closes on Escape.
+- **Inc 29** Frontend maintainability refactor. *Done:* extracted `useCrudManager`, a generic
+  `DataTable`, and `Button`/`FormField` primitives; decomposed `ChatWindow` into `useChat` +
+  `ChatComposer`/`MessageBubble`; the three managers are now thin shells.
+- **Inc 30** Repo hygiene + Claude tooling. *Done:* conventions extracted to
+  `.claude/CONVENTIONS.md` (imported by `CLAUDE.md`); committed `.claude/settings.json` (shared
+  deny-list + lint hook scoped to frontend edits); a `code-reviewer` subagent delegating to the
+  `independent-code-review` skill (+ an Accessibility dimension); the codegen-suggestion Agent Skill
+  built (`.claude/skills/orval-codegen-suggest/`); independent review pass with findings fixed.
+
+## Out of scope (stretch goals)
+
+Real Twilio SMS, containerized Ollama, llama.cpp, admin chat-session viewer.

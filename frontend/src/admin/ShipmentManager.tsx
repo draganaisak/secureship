@@ -1,4 +1,3 @@
-import { useState, type FormEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuth0 } from '@auth0/auth0-react'
 import {
@@ -10,7 +9,11 @@ import {
 } from '../api/generated/endpoints'
 import { ShipmentStatus } from '../api/generated/model'
 import type { ShipmentRead } from '../api/generated/model'
-import { Field, ManagerShell, Modal, ConfirmDialog, StatusBadge, EditButton, DeleteButton, inputClass, btnPrimary, btnGhost, th, td, card, tableCard } from './widgets'
+import { ManagerShell, Modal, ConfirmDialog, StatusBadge, EditButton, DeleteButton } from './widgets'
+import { Button } from '../ui/Button'
+import { TextField, SelectField } from '../ui/FormField'
+import { DataTable } from '../ui/DataTable'
+import { useCrudManager } from './useCrudManager'
 
 interface Draft {
   customer_id: string
@@ -20,7 +23,6 @@ interface Draft {
   origin: string
   destination: string
   estimated_delivery: string
-  last_update: string
 }
 
 const EMPTY: Draft = {
@@ -31,8 +33,12 @@ const EMPTY: Draft = {
   origin: '',
   destination: '',
   estimated_delivery: '',
-  last_update: '',
 }
+
+const blankDraft = (): Draft => ({ ...EMPTY })
+
+const fmtUpdated = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 
 export default function ShipmentManager() {
   const qc = useQueryClient()
@@ -43,30 +49,10 @@ export default function ShipmentManager() {
   const update = useUpdateShipment({ mutation: { onSuccess: invalidate } })
   const remove = useDeleteShipment({ mutation: { onSuccess: invalidate } })
 
-  const [open, setOpen] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [draft, setDraft] = useState<Draft>(EMPTY)
-  const [pendingDelete, setPendingDelete] = useState<{ id: string; label: string } | null>(null)
-  const [q, setQ] = useState('')
-
-  const term = q.trim().toLowerCase()
-  const rows = (list.data?.data ?? []).filter(
-    (s) =>
-      !term ||
-      `${s.tracking_number} ${s.status} ${s.carrier} ${s.origin} ${s.destination}`
-        .toLowerCase()
-        .includes(term),
-  )
-  const set = (k: keyof Draft, v: string) => setDraft((d) => ({ ...d, [k]: v }))
-
-  const openCreate = () => {
-    setEditingId(null)
-    setDraft(EMPTY)
-    setOpen(true)
-  }
-  const openEdit = (s: ShipmentRead) => {
-    setEditingId(s.id)
-    setDraft({
+  const mgr = useCrudManager<ShipmentRead, Draft>({
+    empty: blankDraft,
+    rowId: (s) => s.id,
+    toDraft: (s) => ({
       customer_id: s.customer_id,
       tracking_number: s.tracking_number,
       status: s.status,
@@ -74,34 +60,47 @@ export default function ShipmentManager() {
       origin: s.origin,
       destination: s.destination,
       estimated_delivery: s.estimated_delivery,
-      last_update: s.last_update.slice(0, 16),
-    })
-    setOpen(true)
-  }
-  const close = () => {
-    setOpen(false)
-    setEditingId(null)
-    setDraft(EMPTY)
-  }
+    }),
+    searchText: (s) => `${s.tracking_number} ${s.status} ${s.carrier} ${s.origin} ${s.destination}`,
+    saving: create.isPending || update.isPending,
+    deleting: remove.isPending,
+    saveError: create.error ?? update.error,
+    deleteError: remove.error,
+    resetErrors: () => {
+      create.reset()
+      update.reset()
+      remove.reset()
+    },
+    onSubmit: ({ editingId, draft, done }) => {
+      if (editingId) {
+        update.mutate({ shipmentId: editingId, data: draft }, { onSuccess: done })
+      } else {
+        const data = { ...draft, last_update: new Date().toISOString() }
+        create.mutate({ data }, { onSuccess: done })
+      }
+    },
+    onDelete: ({ id, done }) => remove.mutate({ shipmentId: id }, { onSuccess: done }),
+  })
 
-  function submit(e: FormEvent) {
-    e.preventDefault()
-    const data = { ...draft, last_update: new Date(draft.last_update).toISOString() }
-    if (editingId) {
-      update.mutate({ shipmentId: editingId, data }, { onSuccess: close })
-    } else {
-      create.mutate({ data }, { onSuccess: close })
-    }
-  }
-
-  const saving = create.isPending || update.isPending
+  const rows = mgr.filterRows(list.data?.data ?? [])
 
   return (
     <>
-      <ManagerShell title="Shipments" addLabel="+ Add shipment" onAdd={openCreate} search={q} onSearch={setQ} isLoading={list.isLoading} isError={list.isError} error={list.error}>
-        <ul className="flex flex-col gap-3 md:hidden">
-          {rows.map((s) => (
-            <li key={s.id} className={card}>
+      <ManagerShell title="Shipments" addLabel="+ Add shipment" onAdd={mgr.openCreate} search={mgr.q} onSearch={mgr.setQ} isLoading={list.isLoading} isError={list.isError} error={list.error}>
+        <DataTable
+          rows={rows}
+          getRowKey={(s) => s.id}
+          emptyText={mgr.term ? 'No matches.' : 'No shipments yet.'}
+          columns={[
+            { header: 'Tracking', cell: (s) => s.tracking_number, className: 'font-mono text-xs' },
+            { header: 'Status', cell: (s) => <StatusBadge status={s.status} /> },
+            { header: 'Carrier', cell: (s) => s.carrier },
+            { header: 'Route', cell: (s) => <>{s.origin} &rarr; {s.destination}</> },
+            { header: 'ETA', cell: (s) => s.estimated_delivery },
+            { header: 'Last update', cell: (s) => fmtUpdated(s.last_update) },
+          ]}
+          renderCard={(s) => (
+            <>
               <div className="flex items-center justify-between gap-2">
                 <span className="font-mono text-xs break-all text-slate-700">{s.tracking_number}</span>
                 <StatusBadge status={s.status} />
@@ -113,108 +112,60 @@ export default function ShipmentManager() {
                 <dd className="text-slate-700">{s.origin} &rarr; {s.destination}</dd>
                 <dt className="text-slate-400">ETA</dt>
                 <dd className="text-slate-700">{s.estimated_delivery}</dd>
+                <dt className="text-slate-400">Last update</dt>
+                <dd className="text-slate-700">{fmtUpdated(s.last_update)}</dd>
               </dl>
-              <div className="mt-3 flex justify-end gap-1">
-                <EditButton onClick={() => openEdit(s)} />
-                <DeleteButton onClick={() => setPendingDelete({ id: s.id, label: s.tracking_number })} />
-              </div>
-            </li>
-          ))}
-          {rows.length === 0 && (
-            <li className={`${card} text-sm text-slate-400`}>{term ? 'No matches.' : 'No shipments yet.'}</li>
+            </>
           )}
-        </ul>
-
-        <div className={tableCard}>
-          <table className="w-full text-sm">
-            <thead className="sticky top-14 z-10">
-              <tr>
-                <th className={th}>Tracking</th>
-                <th className={th}>Status</th>
-                <th className={th}>Carrier</th>
-                <th className={th}>Route</th>
-                <th className={th}>ETA</th>
-                <th className={th}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((s) => (
-                <tr key={s.id} className="border-b border-slate-100 last:border-0">
-                  <td className={`${td} font-mono text-xs`}>{s.tracking_number}</td>
-                  <td className={td}><StatusBadge status={s.status} /></td>
-                  <td className={td}>{s.carrier}</td>
-                  <td className={td}>{s.origin} &rarr; {s.destination}</td>
-                  <td className={td}>{s.estimated_delivery}</td>
-                  <td className={`${td} whitespace-nowrap text-right`}>
-                    <div className="flex justify-end gap-1">
-                      <EditButton onClick={() => openEdit(s)} />
-                      <DeleteButton onClick={() => setPendingDelete({ id: s.id, label: s.tracking_number })} />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {rows.length === 0 && (
-                <tr>
-                  <td className={`${td} text-slate-400`} colSpan={6}>{term ? 'No matches.' : 'No shipments yet.'}</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+          actions={(s) => (
+            <>
+              <EditButton onClick={() => mgr.openEdit(s)} />
+              <DeleteButton onClick={() => mgr.askDelete(s.id, s.tracking_number)} />
+            </>
+          )}
+        />
       </ManagerShell>
 
-      {open && (
-        <Modal title={editingId ? 'Edit shipment' : 'Add shipment'} onClose={close}>
-          <form onSubmit={submit} className="flex flex-col gap-3">
+      {mgr.open && (
+        <Modal title={mgr.editingId ? 'Edit shipment' : 'Add shipment'} onClose={mgr.close}>
+          <form onSubmit={mgr.submit} noValidate className="flex flex-col gap-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field label="Customer ID">
-                <input className={inputClass} value={draft.customer_id} onChange={(e) => set('customer_id', e.target.value)} placeholder="uuid" required />
-              </Field>
-              <Field label="Tracking number">
-                <input className={inputClass} value={draft.tracking_number} onChange={(e) => set('tracking_number', e.target.value)} required />
-              </Field>
-              <Field label="Status">
-                <select className={inputClass} value={draft.status} onChange={(e) => set('status', e.target.value)}>
-                  {Object.values(ShipmentStatus).map((s) => (
-                    <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Carrier">
-                <input className={inputClass} value={draft.carrier} onChange={(e) => set('carrier', e.target.value)} required />
-              </Field>
-              <Field label="Origin">
-                <input className={inputClass} value={draft.origin} onChange={(e) => set('origin', e.target.value)} required />
-              </Field>
-              <Field label="Destination">
-                <input className={inputClass} value={draft.destination} onChange={(e) => set('destination', e.target.value)} required />
-              </Field>
-              <Field label="Estimated delivery">
-                <input type="date" className={inputClass} value={draft.estimated_delivery} onChange={(e) => set('estimated_delivery', e.target.value)} required />
-              </Field>
-              <Field label="Last update">
-                <input type="datetime-local" className={inputClass} value={draft.last_update} onChange={(e) => set('last_update', e.target.value)} required />
-              </Field>
+              <TextField label="Customer ID" name="customer_id" value={mgr.draft.customer_id} onChange={(e) => mgr.set('customer_id', e.target.value)} error={mgr.errors.customer_id} placeholder="uuid" required />
+              <TextField label="Tracking number" name="tracking_number" value={mgr.draft.tracking_number} onChange={(e) => mgr.set('tracking_number', e.target.value)} error={mgr.errors.tracking_number} required pattern="MX[0-9]{12}" maxLength={14} title="MX followed by 12 digits, e.g. MX012345678901" placeholder="MX012345678901" />
+              <SelectField
+                label="Status"
+                name="status"
+                value={mgr.draft.status}
+                onChange={(e) => mgr.set('status', e.target.value)}
+                options={Object.values(ShipmentStatus).map((s) => ({ value: s, label: s.replace(/_/g, ' ') }))}
+                required
+              />
+              <TextField label="Carrier" name="carrier" value={mgr.draft.carrier} onChange={(e) => mgr.set('carrier', e.target.value)} error={mgr.errors.carrier} required />
+              <TextField label="Origin" name="origin" value={mgr.draft.origin} onChange={(e) => mgr.set('origin', e.target.value)} error={mgr.errors.origin} required />
+              <TextField label="Destination" name="destination" value={mgr.draft.destination} onChange={(e) => mgr.set('destination', e.target.value)} error={mgr.errors.destination} required />
+              <TextField label="Estimated delivery" name="estimated_delivery" type="date" value={mgr.draft.estimated_delivery} onChange={(e) => mgr.set('estimated_delivery', e.target.value)} error={mgr.errors.estimated_delivery} required />
             </div>
+            {mgr.saveError && (
+              <p role="alert" className="text-sm text-rose-600">{mgr.saveError}</p>
+            )}
             <div className="flex justify-end gap-2 pt-1">
-              <button type="button" className={btnGhost} onClick={close}>Cancel</button>
-              <button type="submit" className={btnPrimary} disabled={saving}>
-                {editingId ? 'Save changes' : 'Add shipment'}
-              </button>
+              <Button variant="ghost" onClick={mgr.close}>Cancel</Button>
+              <Button type="submit" disabled={mgr.saving || !mgr.dirty}>
+                {mgr.editingId ? 'Save changes' : 'Add shipment'}
+              </Button>
             </div>
           </form>
         </Modal>
       )}
 
-      {pendingDelete && (
+      {mgr.pendingDelete && (
         <ConfirmDialog
           title="Delete shipment"
-          message={`Delete shipment ${pendingDelete.label}? This also permanently deletes its packages. This can't be undone.`}
-          pending={remove.isPending}
-          onCancel={() => setPendingDelete(null)}
-          onConfirm={() =>
-            remove.mutate({ shipmentId: pendingDelete.id }, { onSuccess: () => setPendingDelete(null) })
-          }
+          message={`Delete shipment ${mgr.pendingDelete.label}? This also permanently deletes its packages. This can't be undone.`}
+          pending={mgr.deleting}
+          error={mgr.deleteError}
+          onCancel={mgr.cancelDelete}
+          onConfirm={mgr.confirmDelete}
         />
       )}
     </>

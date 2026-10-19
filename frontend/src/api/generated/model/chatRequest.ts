@@ -6,6 +6,10 @@
  */
 
 export interface ChatRequest {
+  /**
+     * @minLength 1
+     * @maxLength 4000
+     */
   message: string;
   session_id?: string | null;
 }

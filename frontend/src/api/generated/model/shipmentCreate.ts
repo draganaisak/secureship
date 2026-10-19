@@ -8,10 +8,14 @@ import type { ShipmentStatus } from './shipmentStatus';
 
 export interface ShipmentCreate {
   customer_id: string;
+  /** @pattern ^MX\d{12}$ */
   tracking_number: string;
   status: ShipmentStatus;
+  /** @minLength 1 */
   carrier: string;
+  /** @minLength 1 */
   origin: string;
+  /** @minLength 1 */
   destination: string;
   estimated_delivery: string;
   last_update: string;

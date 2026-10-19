@@ -7,5 +7,9 @@
 
 export interface VerifyCodeRequest {
   session_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 12
+     */
   code: string;
 }

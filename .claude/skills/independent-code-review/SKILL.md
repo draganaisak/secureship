@@ -83,6 +83,20 @@ DO NOT:
 - Are there misleading names or abstractions?
 - Will this be difficult to modify safely later?
 
+### Accessibility
+Applies to user-facing frontend changes (React components, forms, modals); skip
+for backend-only or tooling changes. Check:
+- Keyboard operability - every interactive control reachable and usable without a
+  mouse; no keyboard traps.
+- Focus management - modals/dialogs trap focus, focus a sensible element on open,
+  and restore focus on close; Escape dismisses dismissible overlays.
+- Semantics and labels - form controls have associated labels; buttons/icons have
+  accessible names; status/error messages use appropriate roles (`role="alert"`,
+  `aria-live`); images have alt text.
+- Correct roles/ARIA - `role="dialog"` + `aria-modal`, valid `aria-*` usage, no
+  redundant or conflicting roles.
+- Visible focus and sufficient color contrast for text and interactive states.
+
 ### Performance
 Only report performance concerns when there is a meaningful or plausible
 impact. Do not optimize prematurely or report theoretical micro-optimizations.
