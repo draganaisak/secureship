@@ -126,14 +126,7 @@ frontend/src/
   api/generated/     # Orval output - do not hand-edit
 docs/
   diagrams/architecture.md   # the system diagrams
-  DEMO.md, DEMO-WALKTHROUGH.md
 ```
-
-## Demo
-
-End-to-end walkthroughs (gate closed -> identity -> 2FA -> verified shipment answer -> admin edit
-reflected live) are in [`docs/DEMO-WALKTHROUGH.md`](docs/DEMO-WALKTHROUGH.md) and
-[`docs/DEMO.md`](docs/DEMO.md).
 
 ## Constraints and non-goals
 

@@ -107,7 +107,7 @@ session (Epic E4). Per spec 4.5, the Auth0 slice is built **using the Auth0 Agen
 
 ## Week 5 goal (Phase 5)
 
-Harden, document, and finalize for the final demo. Required: the three spec items (README,
+Harden, document, and finalize. Required: the three spec items (README,
 diagrams regenerated against the real build, a basic edge-case pass). Stretch goals are explicitly
 out of scope (team's choice, zero weight).
 
@@ -137,7 +137,7 @@ out of scope (team's choice, zero weight).
 - **Inc 23** Input bounds. *Done:* `ChatRequest.message` (1-4000), `VerifyCodeRequest.code`
   (1-12), admin required string fields `min_length=1`; empty/oversized -> 422. Orval regenerated.
 - **Inc 24** README. *Done:* human-facing root `README.md` - what it is, security model, stack,
-  prerequisites, run commands, layout, demo pointer, constraints.
+  prerequisites, run commands, layout, constraints.
 - **Inc 25** Diagrams regenerated against the real build (`docs/diagrams/architecture.md`); the
   five real states, backend-driven identity/2FA, single `lookup_shipments` model tool.
 

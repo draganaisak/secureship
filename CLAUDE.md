@@ -78,7 +78,7 @@ substitutes them into the containers, so applying new values needs a full
 podman-compose dependent-container quirk and skips the frontend).
 
 There is no automated test suite yet; verification is manual (curl `/health` and `/chat`,
-`psql` on `chat_sessions`, and the browser chat). See `docs/DEMO.md` for the exact checks.
+`psql` on `chat_sessions`, and the browser chat).
 
 ## Architecture (the big picture)
 
